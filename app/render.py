@@ -2,6 +2,11 @@
 
 from datetime import datetime, timezone
 
+from markdown_it import MarkdownIt
+
+# html=False escapes any raw HTML in comments, so the rendered view cannot inject markup.
+_md = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": False}).enable(["table", "strikethrough"])
+
 
 def _date(ts):
     if not ts:
@@ -54,3 +59,8 @@ def render(result, scores=True):
         lines.append("\n".join(out))
         lines += ["", "---", ""]
     return "\n".join(lines).rstrip() + "\n"
+
+
+def to_html(markdown_text):
+    html = _md.render(markdown_text)
+    return html.replace("<a href=", '<a target="_blank" rel="noopener noreferrer" href=')

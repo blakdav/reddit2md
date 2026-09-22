@@ -48,7 +48,7 @@ Accepted formats: Netscape `cookies.txt`, extension JSON exports (Cookie-Editor,
 | `REQUEST_DELAY` | `1.0` | Seconds between Reddit requests |
 | `MAX_REQUESTS` | `400` | Safety cap on requests per thread |
 | `STATE_FILE` | `/data/reddit_state.json` | Session file path |
-| `USER_AGENT` | Chrome on Linux | Browser user agent |
+| `USER_AGENT` | bundled Chromium version, no headless marker | Override the browser user agent |
 
 ## Notes
 

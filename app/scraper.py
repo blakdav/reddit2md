@@ -25,11 +25,7 @@ STATE_FILE = os.environ.get("STATE_FILE", "/data/reddit_state.json")
 BASE = "https://old.reddit.com"
 DELAY = float(os.environ.get("REQUEST_DELAY", "1.0"))
 MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "400"))
-USER_AGENT = os.environ.get(
-    "USER_AGENT",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/140.0.0.0 Safari/537.36",
-)
+USER_AGENT = os.environ.get("USER_AGENT", "").strip()
 
 POST_ID_RE = re.compile(r"/comments/([a-z0-9]+)", re.I)
 SHORT_RE = re.compile(r"redd\.it/([a-z0-9]+)", re.I)
@@ -55,7 +51,13 @@ def _launch(p):
         headless=True,
         args=["--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
     )
-    kwargs = {"user_agent": USER_AGENT, "viewport": {"width": 1280, "height": 900}}
+    # Match the bundled Chromium's real version (reduced form, like desktop Chrome) and
+    # drop the "HeadlessChrome" marker, unless USER_AGENT is set explicitly.
+    ua = USER_AGENT or (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{browser.version.split('.')[0]}.0.0.0 Safari/537.36"
+    )
+    kwargs = {"user_agent": ua, "viewport": {"width": 1280, "height": 900}}
     if os.path.exists(STATE_FILE):
         kwargs["storage_state"] = STATE_FILE
     context = browser.new_context(**kwargs)

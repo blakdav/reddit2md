@@ -8,7 +8,7 @@ import uuid
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
 from cookies import CookieError, from_values, to_storage_state
-from render import render
+from render import render, to_html
 from scraper import STATE_FILE, ScrapeError, scrape, session_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -39,6 +39,7 @@ def _run(jid, url, sort, mode, scores):
         with browser_lock:
             result = scrape(url, sort=sort, mode=mode, progress=progress)
         job["markdown"] = render(result, scores=scores)
+        job["html"] = to_html(job["markdown"])
         job["title"] = result["post"]["title"]
         job["count"] = result["count"]
         job["expected"] = result["post"].get("num_comments")
@@ -81,10 +82,11 @@ def job(jid):
     j = JOBS.get(jid)
     if not j:
         return jsonify(error="Unknown job"), 404
-    out = {k: v for k, v in j.items() if k != "markdown"}
+    out = {k: v for k, v in j.items() if k not in ("markdown", "html")}
     out["elapsed"] = round(time.time() - j["started"])
     if j["status"] == "done":
         out["markdown"] = j["markdown"]
+        out["html"] = j["html"]
     return jsonify(out)
 
 

@@ -43,6 +43,28 @@
   #sess { margin-top: 8px; }
   .ck { margin-top: 10px; }
   .ck input { flex: 1 1 300px; min-width: 0; padding: 6px 10px; font-size: 13px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: var(--bg); padding: 7px 12px; }
+  .seg button.on { background: var(--border); color: var(--text); font-weight: 600; }
+  #rendered { display: none; height: 60vh; overflow: auto; resize: vertical; padding: 4px 20px;
+              background: var(--bg); border: 1px solid var(--border); border-radius: 8px; line-height: 1.55; }
+  .view-rendered #rendered { display: block; }
+  .view-rendered #md { display: none; }
+  #rendered h1 { font-size: 21px; margin: 16px 0 8px; }
+  #rendered h2 { font-size: 17px; margin: 20px 0 8px; color: var(--muted); }
+  #rendered p { margin: 6px 0; }
+  #rendered a { color: #6cb6ff; }
+  #rendered hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+  #rendered blockquote { margin: 8px 0 8px 2px; padding: 2px 0 2px 14px; border-left: 2px solid #3a4450; }
+  #rendered code { background: var(--panel); padding: 1px 4px; border-radius: 4px; font-size: 13px; }
+  #rendered pre { background: var(--panel); padding: 10px; border-radius: 6px; overflow: auto; }
+  #rendered pre code { padding: 0; }
+  #rendered table { border-collapse: collapse; } #rendered td, #rendered th { border: 1px solid var(--border); padding: 4px 8px; }
+  details.help { margin-top: 12px; }
+  details.help summary { cursor: pointer; color: var(--text); }
+  details.help ol { margin: 8px 0; padding-left: 20px; line-height: 1.6; }
+  details.help p { margin: 8px 0 0; }
+  details.help code, details.help kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -82,11 +104,16 @@
     <div class="row">
       <span id="meta"></span>
       <span class="row">
+        <span class="seg">
+          <button id="vRendered" type="button">Rendered</button>
+          <button id="vRaw" type="button">Raw</button>
+        </span>
         <button id="copy" type="button">Copy</button>
         <button id="dl" type="button">Download .md</button>
       </span>
     </div>
     <textarea id="md" readonly></textarea>
+    <div id="rendered"></div>
   </div>
 
   <div class="panel session">
@@ -102,12 +129,40 @@
       <button type="submit">Save</button>
     </form>
     <div id="sess">Paste the reddit_session value from your browser's DevTools, or upload a cookie export file.</div>
+    <details class="help">
+      <summary>How to get your Reddit cookie</summary>
+      <ol>
+        <li>Open <code>reddit.com</code> in your browser and make sure you are logged in.</li>
+        <li>Press <kbd>F12</kbd> (Mac: <kbd>Cmd</kbd>+<kbd>Option</kbd>+<kbd>I</kbd>) to open DevTools.</li>
+        <li>Chrome / Edge: open the <b>Application</b> tab, then <b>Cookies</b> &gt; <code>https://www.reddit.com</code>.<br>
+            Firefox: open the <b>Storage</b> tab, then <b>Cookies</b> &gt; <code>https://www.reddit.com</code>.</li>
+        <li>Type <code>reddit_session</code> in the <b>Filter</b> box. The list is alphabetical, so it is near the bottom otherwise.</li>
+        <li>Click the row and copy the full value from the preview pane below the table. It is a long string, often starting with <code>eyJ</code>.</li>
+        <li>Paste it in the field above and click <b>Save</b>. It checks the login automatically.</li>
+      </ol>
+      <p><b>If you cannot find it:</b> open the <b>Network</b> tab, reload the page, click the first request, and under <b>Request Headers</b> find <b>Cookie</b>. Copy the text between <code>reddit_session=</code> and the next <code>;</code>.</p>
+      <p><b>Alternative:</b> export cookies with an extension such as Get cookies.txt LOCALLY, use <b>Upload cookies</b>, then delete the exported file.</p>
+      <p>Treat the value like a password. Do not save it anywhere else. Sessions last weeks to months; when <b>Check</b> reports you are logged out, repeat these steps.</p>
+    </details>
   </div>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let title = "thread";
+let view = "rendered";
+try { view = localStorage.getItem("r2m-view") || "rendered"; } catch {}
+
+function setView(v) {
+  view = v;
+  $("out").classList.toggle("view-rendered", v === "rendered");
+  $("vRendered").classList.toggle("on", v === "rendered");
+  $("vRaw").classList.toggle("on", v === "raw");
+  try { localStorage.setItem("r2m-view", v); } catch {}
+}
+setView(view);
+$("vRendered").addEventListener("click", () => setView("rendered"));
+$("vRaw").addEventListener("click", () => setView("raw"));
 
 function setStatus(msg, cls = "") { $("status").textContent = msg; $("status").className = cls; }
 
@@ -121,6 +176,7 @@ async function poll(job) {
     if (j.status === "error") { setStatus(j.error, "err"); return; }
     title = j.title || "thread";
     $("md").value = j.markdown;
+    $("rendered").innerHTML = j.html;
     const exp = j.expected != null ? ` of ${j.expected} reported` : "";
     $("meta").textContent = `${j.count} comments${exp} · ${j.mode.toUpperCase()} mode · ${j.elapsed}s`;
     $("out").classList.add("show");
@@ -150,10 +206,37 @@ $("form").addEventListener("submit", async (e) => {
   }
 });
 
+async function copyRendered() {
+  const html = $("rendered").innerHTML, text = $("rendered").innerText;
+  if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+    await navigator.clipboard.write([new ClipboardItem({
+      "text/html": new Blob([html], {type: "text/html"}),
+      "text/plain": new Blob([text], {type: "text/plain"}),
+    })]);
+    return;
+  }
+  // Plain http: the async clipboard API is unavailable, so copy a selection (keeps formatting).
+  const sel = window.getSelection(), range = document.createRange();
+  range.selectNodeContents($("rendered"));
+  sel.removeAllRanges(); sel.addRange(range);
+  document.execCommand("copy");
+  sel.removeAllRanges();
+}
+
+async function copyRaw() {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText($("md").value);
+    return;
+  }
+  $("md").select(); document.execCommand("copy");
+  window.getSelection().removeAllRanges();
+}
+
 $("copy").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("md").value); }
-  catch { $("md").select(); document.execCommand("copy"); }
-  setStatus("Copied to clipboard", "ok");
+  try {
+    if (view === "rendered") await copyRendered(); else await copyRaw();
+    setStatus(view === "rendered" ? "Copied formatted text" : "Copied raw Markdown", "ok");
+  } catch (err) { setStatus("Copy failed: " + err.message, "err"); }
 });
 
 $("dl").addEventListener("click", () => {
