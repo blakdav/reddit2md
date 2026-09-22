@@ -74,6 +74,15 @@
   .item button:hover { color: var(--err); border-color: var(--err); }
   .empty { color: var(--muted); font-size: 14px; padding: 8px; }
 
+  details.settings > summary { cursor: pointer; font-size: 16px; font-weight: 700; }
+  .settings .grid { display: grid; grid-template-columns: max-content 1fr; gap: 12px 14px; align-items: center; margin-top: 14px; }
+  .settings .grid label { color: var(--text); }
+  .settings input[type=number] { width: 100px; padding: 7px 10px; }
+  .settings select { padding: 7px 10px; max-width: 100%; }
+  .settings .hint { color: var(--muted); font-size: 13px; }
+  #setmsg { font-size: 13px; color: var(--muted); }
+  #setmsg.ok { color: var(--ok); } #setmsg.err { color: var(--err); }
+  @media (max-width: 600px) { .settings .grid { grid-template-columns: 1fr; } }
   .session { font-size: 13px; color: var(--muted); }
   .session strong { color: var(--text); margin-right: 4px; }
   .session button { padding: 4px 10px; font-size: 13px; }
@@ -147,6 +156,28 @@
     <div id="list"></div>
   </div>
 
+  <div class="panel">
+    <details class="settings" id="settingsBox">
+      <summary>Settings</summary>
+      <div class="grid">
+        <label for="retDays">Auto-delete saved threads</label>
+        <div class="row">
+          <input type="number" id="retDays" min="0" max="3650" step="1">
+          <span class="hint">days after they were last fetched. 0 keeps them forever.</span>
+        </div>
+        <label for="tzSel">Time zone</label>
+        <div class="row">
+          <select id="tzSel"></select>
+          <button type="button" id="tzBrowser">Use this browser's zone</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button type="button" class="primary" id="saveSettings">Save settings</button>
+        <span id="setmsg"></span>
+      </div>
+    </details>
+  </div>
+
   <div class="panel session">
     <div class="row">
       <strong>Reddit session</strong>
@@ -184,9 +215,16 @@ const SORT_NAMES = {confidence: "Best", top: "Top", new: "New", old: "Old", cont
 let current = null;      // meta of the thread on screen
 let threads = [];        // saved thread list
 let view = "rendered";
+let tz = undefined;      // display time zone from server settings
 try { view = localStorage.getItem("r2m-view") || "rendered"; } catch {}
 
-const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleString([], {dateStyle: "medium", timeStyle: "short"}) : "";
+function fmtDate(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  try {
+    return d.toLocaleString([], {year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: tz, timeZoneName: "short"});
+  } catch { return d.toLocaleString(); }
+}
 function setStatus(msg, cls = "") { $("status").textContent = msg; $("status").className = cls; }
 
 // ------------------------------------------------------------ view toggle
@@ -312,6 +350,7 @@ async function loadList() {
   try {
     const j = await (await fetch("/api/threads")).json();
     threads = j.threads || [];
+    tz = j.timezone || undefined;
     $("retention").textContent = j.retention_days > 0
       ? `Auto-delete after ${j.retention_days} day${j.retention_days == 1 ? "" : "s"}` : "Kept forever";
   } catch { threads = []; }
@@ -424,6 +463,50 @@ $("check").addEventListener("click", async () => {
       + ` · JSON endpoints ${j.json_ok ? "OK" : "blocked (DOM mode will be used)"}`;
   } catch (err) { $("sess").textContent = err.message; }
   $("check").disabled = false;
+});
+
+// ------------------------------------------------------------ settings
+let settingsLoaded = false;
+async function loadSettings() {
+  const j = await (await fetch("/api/settings")).json();
+  const sel = $("tzSel");
+  if (!settingsLoaded) {
+    sel.replaceChildren(...j.timezones.map(z => { const o = document.createElement("option"); o.value = o.textContent = z; return o; }));
+    settingsLoaded = true;
+  }
+  sel.value = j.settings.timezone;
+  $("retDays").value = j.settings.retention_days;
+}
+$("settingsBox").addEventListener("toggle", () => { if ($("settingsBox").open) loadSettings(); });
+
+$("tzBrowser").addEventListener("click", () => {
+  const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if ([...$("tzSel").options].some(o => o.value === z)) $("tzSel").value = z;
+  else { $("setmsg").textContent = `Browser zone ${z} is not in the list.`; $("setmsg").className = "err"; }
+});
+
+$("saveSettings").addEventListener("click", async () => {
+  const days = parseInt($("retDays").value, 10);
+  const msg = $("setmsg");
+  if (Number.isNaN(days) || days < 0) { msg.textContent = "Enter 0 or a positive number of days."; msg.className = "err"; return; }
+  if (days > 0) {
+    const cutoff = Date.now() / 1000 - days * 86400;
+    const doomed = threads.filter(t => (t.saved_at || 0) < cutoff).length;
+    if (doomed && !confirm(`${doomed} saved thread${doomed == 1 ? "" : "s"} older than ${days} day${days == 1 ? "" : "s"} will be deleted now. Continue?`)) return;
+  }
+  try {
+    const r = await fetch("/api/settings", {method: "PUT", headers: {"Content-Type": "application/json"},
+                                           body: JSON.stringify({retention_days: days, timezone: $("tzSel").value})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    msg.textContent = "Saved." + (j.deleted ? ` Deleted ${j.deleted} old thread${j.deleted == 1 ? "" : "s"}.` : "");
+    msg.className = "ok";
+    await loadList();
+    if (current) {
+      if (threads.some(t => t.id === current.id)) await openThread(current.id);
+      else { current = null; $("out").classList.remove("show"); history.replaceState(null, "", location.pathname); }
+    }
+  } catch (err) { msg.textContent = err.message; msg.className = "err"; }
 });
 
 loadList().then(openFromHash);

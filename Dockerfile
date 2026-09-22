@@ -8,8 +8,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt \
- && playwright install --with-deps chromium \
- && rm -rf /var/lib/apt/lists/*
+ && playwright install --with-deps --only-shell chromium \
+ && rm -rf /ms-playwright/ffmpeg-* /var/lib/apt/lists/*
 
 RUN useradd -u 1000 -m appuser && mkdir -p /data && chown appuser:appuser /data
 COPY app/ .

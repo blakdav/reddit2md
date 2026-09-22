@@ -17,7 +17,16 @@ Nested replies are rendered as nested blockquotes.
 
 Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/`, one JSON file per thread. Converting the same thread again loads the saved copy instantly without contacting Reddit; click **Refresh** to fetch a new copy. The **Saved threads** list shows each thread's title, subreddit, save date, comment count and a link back to Reddit. Each thread also has its own address (`http://<server>:8095/#t=<id>`) you can bookmark.
 
-Saved threads older than `RETENTION_DAYS` (default 30, based on when they were last fetched) are deleted automatically, checked hourly. Set `RETENTION_DAYS=0` to keep them forever. Change it in `docker-compose.yml` and recreate the container.
+Saved threads are deleted automatically once they are older than the auto-delete setting (default 30 days, based on when they were last fetched), checked hourly.
+
+## Settings (web UI)
+
+Open **Settings** in the web UI to change:
+
+- **Auto-delete saved threads:** days to keep saved threads. `0` keeps them forever. Lowering it deletes older threads immediately, after a confirmation.
+- **Time zone:** the zone used for comment times, post times and saved dates. Times are stored in UTC, so changing it re-renders every saved thread without re-fetching.
+
+Settings are stored in `/opt/docker/reddit2md/settings.json`. `RETENTION_DAYS` and `TZ` in `docker-compose.yml` only set the defaults before anything is saved in the UI.
 
 ## Setup
 
@@ -47,13 +56,14 @@ Accepted formats: Netscape `cookies.txt`, extension JSON exports (Cookie-Editor,
 
 **Remove** deletes the saved session. When the session expires, **Check** will say so; export and upload again.
 
-## Settings (environment)
+## Environment variables
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `REQUEST_DELAY` | `1.0` | Seconds between Reddit requests |
 | `MAX_REQUESTS` | `400` | Safety cap on requests per thread |
-| `RETENTION_DAYS` | `30` | Auto-delete saved threads after this many days. `0` keeps them forever |
+| `RETENTION_DAYS` | `30` | Initial auto-delete days, until changed in Settings |
+| `TZ` | `UTC` | Initial display time zone, until changed in Settings |
 | `THREADS_DIR` | `/data/threads` | Where saved threads are stored |
 | `STATE_FILE` | `/data/reddit_state.json` | Session file path |
 | `USER_AGENT` | bundled Chromium version, no headless marker | Override the browser user agent |

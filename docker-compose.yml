@@ -8,8 +8,8 @@ services:
     volumes:
       - /opt/docker/reddit2md:/data
     environment:
-      - TZ=America/Los_Angeles
+      - TZ=America/Los_Angeles  # initial display time zone; change it later in the web UI Settings
       - REQUEST_DELAY=1.0   # seconds between Reddit requests
       - MAX_REQUESTS=400    # safety cap per thread
-      - RETENTION_DAYS=30   # auto-delete saved threads after N days (0 = keep forever)
+      - RETENTION_DAYS=30   # initial default; change it later in the web UI Settings
     shm_size: "512mb"

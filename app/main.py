@@ -7,6 +7,7 @@ import uuid
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
+import settings
 import storage
 from cookies import CookieError, from_values, to_storage_state
 from render import render, to_html
@@ -22,7 +23,7 @@ JOB_TTL = 3600
 SORTS = ("confidence", "top", "new", "old", "controversial", "qa")
 browser_lock = threading.Lock()  # one Chromium at a time
 
-storage.start_purger()
+storage.start_purger(lambda: settings.load()["retention_days"])
 
 
 def _cleanup_jobs():
@@ -99,7 +100,8 @@ def job(jid):
 
 @app.get("/api/threads")
 def threads_list():
-    return jsonify(threads=storage.list_threads(), retention_days=storage.RETENTION_DAYS)
+    cfg = settings.load()
+    return jsonify(threads=storage.list_threads(), retention_days=cfg["retention_days"], timezone=cfg["timezone"])
 
 
 @app.get("/api/threads/<tid>")
@@ -111,7 +113,8 @@ def thread_get(tid):
     if not data:
         return jsonify(error="Not found (it may have been auto-deleted)"), 404
     scores = request.args.get("scores", "1") != "0"
-    md = render({"post": data["post"], "comments": data["comments"], "count": data["count"]}, scores=scores)
+    md = render({"post": data["post"], "comments": data["comments"], "count": data["count"]},
+                scores=scores, tz=settings.load()["timezone"])
     meta = {k: data.get(k) for k in storage.META_KEYS}
     return jsonify(meta=meta, markdown=md, html=to_html(md))
 
@@ -123,6 +126,23 @@ def thread_delete(tid):
     except ValueError:
         return jsonify(error="Bad id"), 400
     return jsonify(ok=True)
+
+
+# ---------------------------------------------------------------- settings
+
+@app.get("/api/settings")
+def settings_get():
+    return jsonify(settings=settings.load(), timezones=settings.timezones())
+
+
+@app.put("/api/settings")
+def settings_put():
+    try:
+        data = settings.save(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    deleted = storage.purge(data["retention_days"])
+    return jsonify(settings=data, deleted=deleted)
 
 
 # ---------------------------------------------------------------- Reddit session

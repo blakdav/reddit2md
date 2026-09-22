@@ -1,6 +1,7 @@
 """Turn the scraped thread structure into Markdown."""
 
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from markdown_it import MarkdownIt
 
@@ -8,10 +9,10 @@ from markdown_it import MarkdownIt
 _md = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": False}).enable(["table", "strikethrough"])
 
 
-def _date(ts):
+def _date(ts, tz):
     if not ts:
         return ""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return datetime.fromtimestamp(ts, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
 
 
 def _quote(text, depth):
@@ -21,27 +22,28 @@ def _quote(text, depth):
     return "\n".join((prefix + line).rstrip() for line in text.split("\n"))
 
 
-def _comment(node, depth, scores, out):
+def _comment(node, depth, scores, tz, out):
     meta = f"**u/{node['author'] or '[deleted]'}**"
     if scores and node.get("score") is not None:
         meta += f" · {node['score']} pts"
     if node.get("created"):
-        meta += f" · {_date(node['created'])}"
+        meta += f" · {_date(node['created'], tz)}"
     body = (node.get("body") or "").strip() or "*[empty]*"
     out.append(_quote(meta + "\n\n" + body, depth))
     for r in node["replies"]:
         out.append(_quote("", depth).rstrip())
-        _comment(r, depth + 1, scores, out)
+        _comment(r, depth + 1, scores, tz, out)
 
 
-def render(result, scores=True):
+def render(result, scores=True, tz="UTC"):
+    tz = ZoneInfo(tz or "UTC")
     post = result["post"]
     lines = [f"# {post['title']}", ""]
     meta = [f"r/{post['subreddit']}", f"u/{post['author']}"]
     if scores and post.get("score") is not None:
         meta.append(f"{post['score']} pts")
     if post.get("created"):
-        meta.append(_date(post["created"]))
+        meta.append(_date(post["created"], tz))
     meta.append(f"{result['count']} comments captured")
     lines.append(" · ".join(meta))
     lines.append("")
@@ -55,7 +57,7 @@ def render(result, scores=True):
 
     for top in result["comments"]:
         out = []
-        _comment(top, 0, scores, out)
+        _comment(top, 0, scores, tz, out)
         lines.append("\n".join(out))
         lines += ["", "---", ""]
     return "\n".join(lines).rstrip() + "\n"

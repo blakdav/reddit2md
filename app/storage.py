@@ -10,7 +10,6 @@ import time
 log = logging.getLogger("reddit2md")
 
 THREADS_DIR = os.environ.get("THREADS_DIR", "/data/threads")
-RETENTION_DAYS = float(os.environ.get("RETENTION_DAYS", "30"))  # 0 = keep forever
 INDEX = os.path.join(THREADS_DIR, "index.json")
 ID_RE = re.compile(r"^[a-z0-9]{1,16}$")
 _lock = threading.Lock()
@@ -115,23 +114,24 @@ def delete(tid):
         _write(INDEX, idx)
 
 
-def purge():
-    if RETENTION_DAYS <= 0:
+def purge(days):
+    """Delete threads last fetched more than `days` ago. 0 keeps everything."""
+    if not days or days <= 0:
         return 0
-    cutoff = time.time() - RETENTION_DAYS * 86400
+    cutoff = time.time() - days * 86400
     old = [m["id"] for m in list_threads() if (m.get("saved_at") or 0) < cutoff]
     for tid in old:
         delete(tid)
     if old:
-        log.info("Auto-deleted %d saved threads older than %g days", len(old), RETENTION_DAYS)
+        log.info("Auto-deleted %d saved threads older than %g days", len(old), days)
     return len(old)
 
 
-def start_purger(interval=3600):
+def start_purger(get_days, interval=3600):
     def loop():
         while True:
             try:
-                purge()
+                purge(get_days())
             except Exception:
                 log.exception("Purge failed")
             time.sleep(interval)
