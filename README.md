@@ -13,6 +13,12 @@ Reddit closed anonymous `.json` access and self-serve API keys in 2026, so this 
 
 Nested replies are rendered as nested blockquotes.
 
+## Saved threads
+
+Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/`, one JSON file per thread. Converting the same thread again loads the saved copy instantly without contacting Reddit; click **Refresh** to fetch a new copy. The **Saved threads** list shows each thread's title, subreddit, save date, comment count and a link back to Reddit. Each thread also has its own address (`http://<server>:8095/#t=<id>`) you can bookmark.
+
+Saved threads older than `RETENTION_DAYS` (default 30, based on when they were last fetched) are deleted automatically, checked hourly. Set `RETENTION_DAYS=0` to keep them forever. Change it in `docker-compose.yml` and recreate the container.
+
 ## Setup
 
 ### 1. Deploy
@@ -47,6 +53,8 @@ Accepted formats: Netscape `cookies.txt`, extension JSON exports (Cookie-Editor,
 |---|---|---|
 | `REQUEST_DELAY` | `1.0` | Seconds between Reddit requests |
 | `MAX_REQUESTS` | `400` | Safety cap on requests per thread |
+| `RETENTION_DAYS` | `30` | Auto-delete saved threads after this many days. `0` keeps them forever |
+| `THREADS_DIR` | `/data/threads` | Where saved threads are stored |
 | `STATE_FILE` | `/data/reddit_state.json` | Session file path |
 | `USER_AGENT` | bundled Chromium version, no headless marker | Override the browser user agent |
 

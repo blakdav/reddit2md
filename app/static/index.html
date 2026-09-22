@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #111418; --panel: #1a1f25; --border: #2b323b; --text: #e3e7ec;
-    --muted: #8b95a1; --accent: #ff6a3d; --ok: #4cc38a; --err: #f06464;
+    --muted: #8b95a1; --accent: #ff6a3d; --ok: #4cc38a; --err: #f06464; --link: #6cb6ff;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -16,36 +16,31 @@
   h1 { font-size: 22px; margin: 0 0 4px; }
   h1 span { color: var(--accent); }
   .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
+  .panel:first-of-type { margin-top: 0; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   input[type=url] { flex: 1 1 400px; min-width: 0; }
-  input, select, button, textarea {
+  input, select, button, textarea, .btn {
     font: inherit; color: var(--text); background: var(--bg);
     border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
   }
   input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  button { cursor: pointer; background: var(--border); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  button, .btn { cursor: pointer; background: var(--border); text-decoration: none; }
+  .primary, .seg button.on { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
   button:disabled { opacity: .5; cursor: default; }
   label { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; }
   .opts { margin-top: 12px; }
   #status { margin: 14px 0 0; min-height: 22px; font-size: 14px; color: var(--muted); }
   #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+
   .out { margin-top: 16px; display: none; }
   .out.show { display: block; }
-  .out .row { justify-content: space-between; margin-bottom: 8px; }
+  .bar { justify-content: space-between; margin-bottom: 8px; }
   #meta { color: var(--muted); font-size: 14px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: var(--bg); color: var(--muted); padding: 8px 14px; }
   textarea { width: 100%; height: 60vh; resize: vertical;
              font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  .session { margin-top: 16px; font-size: 13px; color: var(--muted); }
-  .session strong { color: var(--text); margin-right: 4px; }
-  .session button { padding: 4px 10px; font-size: 13px; }
-  #sess { margin-top: 8px; }
-  .ck { margin-top: 10px; }
-  .ck input { flex: 1 1 300px; min-width: 0; padding: 6px 10px; font-size: 13px; }
-  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; background: var(--bg); padding: 7px 12px; }
-  .seg button.on { background: var(--border); color: var(--text); font-weight: 600; }
   #rendered { display: none; height: 60vh; overflow: auto; resize: vertical; padding: 4px 20px;
               background: var(--bg); border: 1px solid var(--border); border-radius: 8px; line-height: 1.55; }
   .view-rendered #rendered { display: block; }
@@ -53,13 +48,38 @@
   #rendered h1 { font-size: 21px; margin: 16px 0 8px; }
   #rendered h2 { font-size: 17px; margin: 20px 0 8px; color: var(--muted); }
   #rendered p { margin: 6px 0; }
-  #rendered a { color: #6cb6ff; }
+  #rendered a { color: var(--link); }
   #rendered hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
   #rendered blockquote { margin: 8px 0 8px 2px; padding: 2px 0 2px 14px; border-left: 2px solid #3a4450; }
   #rendered code { background: var(--panel); padding: 1px 4px; border-radius: 4px; font-size: 13px; }
   #rendered pre { background: var(--panel); padding: 10px; border-radius: 6px; overflow: auto; }
   #rendered pre code { padding: 0; }
   #rendered table { border-collapse: collapse; } #rendered td, #rendered th { border: 1px solid var(--border); padding: 4px 8px; }
+
+  .lib-head { justify-content: space-between; }
+  .lib-head h2 { font-size: 16px; margin: 0; }
+  .lib-head .note { color: var(--muted); font-size: 13px; }
+  #filter { width: 100%; margin: 10px 0 6px; padding: 7px 10px; font-size: 14px; }
+  #list { max-height: 420px; overflow: auto; }
+  .item { display: flex; gap: 10px; align-items: center; padding: 9px 8px; border-top: 1px solid var(--border); }
+  .item:first-child { border-top: 0; }
+  .item.active { background: #222932; border-radius: 6px; }
+  .item .info { flex: 1; min-width: 0; }
+  .item .t { color: var(--text); text-decoration: none; font-weight: 600; display: block;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .t:hover { color: var(--accent); }
+  .item .m { color: var(--muted); font-size: 13px; }
+  .item a.rd { color: var(--link); font-size: 13px; text-decoration: none; white-space: nowrap; }
+  .item button { padding: 3px 9px; font-size: 13px; background: transparent; color: var(--muted); }
+  .item button:hover { color: var(--err); border-color: var(--err); }
+  .empty { color: var(--muted); font-size: 14px; padding: 8px; }
+
+  .session { font-size: 13px; color: var(--muted); }
+  .session strong { color: var(--text); margin-right: 4px; }
+  .session button { padding: 4px 10px; font-size: 13px; }
+  #sess { margin-top: 8px; }
+  .ck { margin-top: 10px; }
+  .ck input { flex: 1 1 300px; min-width: 0; padding: 6px 10px; font-size: 13px; }
   details.help { margin-top: 12px; }
   details.help summary { cursor: pointer; color: var(--text); }
   details.help ol { margin: 8px 0; padding-left: 20px; line-height: 1.6; }
@@ -70,7 +90,7 @@
 <body>
 <main>
   <h1>reddit<span>2</span>md</h1>
-  <p class="sub">Paste a Reddit thread URL. All comments are expanded and converted to Markdown.</p>
+  <p class="sub">Paste a Reddit thread URL. All comments are expanded, converted to Markdown, and saved here.</p>
 
   <div class="panel">
     <form id="form" class="row">
@@ -101,7 +121,7 @@
   </div>
 
   <div class="out" id="out">
-    <div class="row">
+    <div class="row bar">
       <span id="meta"></span>
       <span class="row">
         <span class="seg">
@@ -110,10 +130,21 @@
         </span>
         <button id="copy" type="button">Copy</button>
         <button id="dl" type="button">Download .md</button>
+        <a id="reddit" class="btn" target="_blank" rel="noopener noreferrer">Reddit &#8599;</a>
+        <button id="refresh" type="button" title="Fetch this thread from Reddit again">Refresh</button>
       </span>
     </div>
     <textarea id="md" readonly></textarea>
     <div id="rendered"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row lib-head">
+      <h2>Saved threads <span id="libcount" class="note"></span></h2>
+      <span id="retention" class="note"></span>
+    </div>
+    <input type="search" id="filter" placeholder="Filter by title or subreddit">
+    <div id="list"></div>
   </div>
 
   <div class="panel session">
@@ -149,63 +180,90 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let title = "thread";
+const SORT_NAMES = {confidence: "Best", top: "Top", new: "New", old: "Old", controversial: "Controversial", qa: "Q&A"};
+let current = null;      // meta of the thread on screen
+let threads = [];        // saved thread list
 let view = "rendered";
 try { view = localStorage.getItem("r2m-view") || "rendered"; } catch {}
 
+const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleString([], {dateStyle: "medium", timeStyle: "short"}) : "";
+function setStatus(msg, cls = "") { $("status").textContent = msg; $("status").className = cls; }
+
+// ------------------------------------------------------------ view toggle
 function setView(v) {
   view = v;
   $("out").classList.toggle("view-rendered", v === "rendered");
   $("vRendered").classList.toggle("on", v === "rendered");
   $("vRaw").classList.toggle("on", v === "raw");
+  $("vRendered").setAttribute("aria-pressed", v === "rendered");
+  $("vRaw").setAttribute("aria-pressed", v === "raw");
   try { localStorage.setItem("r2m-view", v); } catch {}
 }
 setView(view);
 $("vRendered").addEventListener("click", () => setView("rendered"));
 $("vRaw").addEventListener("click", () => setView("raw"));
 
-function setStatus(msg, cls = "") { $("status").textContent = msg; $("status").className = cls; }
+// ------------------------------------------------------------ open a saved thread
+async function openThread(id, note) {
+  const r = await fetch(`/api/threads/${encodeURIComponent(id)}?scores=${$("scores").checked ? 1 : 0}`);
+  const j = await r.json();
+  if (!r.ok) { setStatus(j.error || "Could not load thread", "err"); return; }
+  current = j.meta;
+  $("md").value = j.markdown;
+  $("rendered").innerHTML = j.html;
+  $("rendered").scrollTop = 0;
+  const exp = current.expected != null ? ` of ${current.expected}` : "";
+  $("meta").textContent = `Saved ${fmtDate(current.saved_at)} · ${current.count}${exp} comments · ${SORT_NAMES[current.sort] || "Best"}`;
+  $("reddit").href = current.permalink;
+  $("out").classList.add("show");
+  if (location.hash !== `#t=${id}`) history.replaceState(null, "", `#t=${id}`);
+  renderList();
+  if (note) setStatus(note, "ok");
+}
 
+// ------------------------------------------------------------ convert / refresh
 async function poll(job) {
   while (true) {
     await new Promise(r => setTimeout(r, 1500));
     const r = await fetch(`/api/job/${job}`);
     const j = await r.json();
-    if (!r.ok) { setStatus(j.error || "Job lost", "err"); return; }
+    if (!r.ok) throw new Error(j.error || "Job lost");
     if (j.status === "running") { setStatus(`${j.progress} (${j.elapsed}s)`); continue; }
-    if (j.status === "error") { setStatus(j.error, "err"); return; }
-    title = j.title || "thread";
-    $("md").value = j.markdown;
-    $("rendered").innerHTML = j.html;
-    const exp = j.expected != null ? ` of ${j.expected} reported` : "";
-    $("meta").textContent = `${j.count} comments${exp} · ${j.mode.toUpperCase()} mode · ${j.elapsed}s`;
-    $("out").classList.add("show");
-    setStatus("Done", "ok");
-    return;
+    if (j.status === "error") throw new Error(j.error);
+    return j;
   }
 }
 
-$("form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  $("go").disabled = true;
-  $("out").classList.remove("show");
-  setStatus("Starting");
+async function convert(url, refresh) {
+  $("go").disabled = $("refresh").disabled = true;
+  setStatus(refresh ? "Refreshing from Reddit" : "Starting");
   try {
     const r = await fetch("/api/convert", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({url: $("url").value, sort: $("sort").value,
-                            mode: $("mode").value, scores: $("scores").checked}),
+      body: JSON.stringify({url, refresh, sort: $("sort").value, mode: $("mode").value}),
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    await poll(j.job);
+    if (j.cached) {
+      await openThread(j.id);
+      setStatus(`Loaded saved copy from ${fmtDate(current.saved_at)}. Click Refresh to fetch it again.`, "ok");
+      return;
+    }
+    const done = await poll(j.job);
+    await loadList();
+    await openThread(done.id, `Done in ${done.elapsed}s. Saved.`);
   } catch (err) {
     setStatus(err.message, "err");
   } finally {
-    $("go").disabled = false;
+    $("go").disabled = $("refresh").disabled = false;
   }
-});
+}
 
+$("form").addEventListener("submit", (e) => { e.preventDefault(); convert($("url").value.trim(), false); });
+$("refresh").addEventListener("click", () => current && convert(current.permalink, true));
+$("scores").addEventListener("change", () => current && openThread(current.id));
+
+// ------------------------------------------------------------ copy / download
 async function copyRendered() {
   const html = $("rendered").innerHTML, text = $("rendered").innerText;
   if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
@@ -233,14 +291,15 @@ async function copyRaw() {
 }
 
 $("copy").addEventListener("click", async () => {
+  const which = view;
   try {
-    if (view === "rendered") await copyRendered(); else await copyRaw();
-    setStatus(view === "rendered" ? "Copied formatted text" : "Copied raw Markdown", "ok");
+    if (which === "rendered") await copyRendered(); else await copyRaw();
+    setStatus(which === "rendered" ? "Copied formatted text" : "Copied raw Markdown", "ok");
   } catch (err) { setStatus("Copy failed: " + err.message, "err"); }
 });
 
 $("dl").addEventListener("click", () => {
-  const name = title.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 80) || "thread";
+  const name = (current?.title || "thread").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 80) || "thread";
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([$("md").value], {type: "text/markdown"}));
   a.download = `${name}.md`;
@@ -248,6 +307,72 @@ $("dl").addEventListener("click", () => {
   URL.revokeObjectURL(a.href);
 });
 
+// ------------------------------------------------------------ saved threads list
+async function loadList() {
+  try {
+    const j = await (await fetch("/api/threads")).json();
+    threads = j.threads || [];
+    $("retention").textContent = j.retention_days > 0
+      ? `Auto-delete after ${j.retention_days} day${j.retention_days == 1 ? "" : "s"}` : "Kept forever";
+  } catch { threads = []; }
+  renderList();
+}
+
+function renderList() {
+  const q = $("filter").value.trim().toLowerCase();
+  const shown = threads.filter(t => !q || (t.title || "").toLowerCase().includes(q) || (t.subreddit || "").toLowerCase().includes(q));
+  $("libcount").textContent = threads.length ? `(${threads.length})` : "";
+  const list = $("list");
+  list.replaceChildren();
+  if (!shown.length) {
+    const d = document.createElement("div");
+    d.className = "empty";
+    d.textContent = threads.length ? "No matches." : "Nothing saved yet. Converted threads appear here.";
+    list.append(d);
+    return;
+  }
+  for (const t of shown) {
+    const item = document.createElement("div");
+    item.className = "item" + (current && current.id === t.id ? " active" : "");
+
+    const info = document.createElement("div");
+    info.className = "info";
+    const title = document.createElement("a");
+    title.className = "t"; title.href = `#t=${t.id}`; title.textContent = t.title || t.id; title.title = t.title || "";
+    const m = document.createElement("div");
+    m.className = "m";
+    m.textContent = `r/${t.subreddit} · saved ${fmtDate(t.saved_at)} · ${t.count} comments`;
+    info.append(title, m);
+
+    const rd = document.createElement("a");
+    rd.className = "rd"; rd.href = t.permalink; rd.target = "_blank"; rd.rel = "noopener noreferrer";
+    rd.textContent = "Reddit ↗";
+
+    const del = document.createElement("button");
+    del.type = "button"; del.textContent = "Delete"; del.title = "Delete saved copy";
+    del.addEventListener("click", async () => {
+      if (!confirm(`Delete the saved copy of "${t.title}"?`)) return;
+      await fetch(`/api/threads/${encodeURIComponent(t.id)}`, {method: "DELETE"});
+      if (current && current.id === t.id) {
+        current = null; $("out").classList.remove("show"); history.replaceState(null, "", location.pathname);
+      }
+      loadList();
+    });
+
+    item.append(info, rd, del);
+    list.append(item);
+  }
+}
+
+$("filter").addEventListener("input", renderList);
+
+function openFromHash() {
+  const m = location.hash.match(/^#t=([a-z0-9]+)$/i);
+  if (m && (!current || current.id !== m[1].toLowerCase())) openThread(m[1].toLowerCase());
+}
+window.addEventListener("hashchange", openFromHash);
+
+// ------------------------------------------------------------ Reddit session
 $("upbtn").addEventListener("click", () => $("upfile").click());
 
 $("upfile").addEventListener("change", async () => {
@@ -300,6 +425,8 @@ $("check").addEventListener("click", async () => {
   } catch (err) { $("sess").textContent = err.message; }
   $("check").disabled = false;
 });
+
+loadList().then(openFromHash);
 </script>
 </body>
 </html>

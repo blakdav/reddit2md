@@ -351,7 +351,7 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None):
             else:
                 post, comments, n = scrape_dom(page, post_id, sort, progress)
             _save_state(context)
-            return {"post": post, "comments": comments, "count": n, "mode": used}
+            return {"id": post_id.lower(), "post": post, "comments": comments, "count": n, "mode": used, "sort": sort}
         finally:
             context.close()
             browser.close()

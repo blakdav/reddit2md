@@ -11,4 +11,5 @@ services:
       - TZ=America/Los_Angeles
       - REQUEST_DELAY=1.0   # seconds between Reddit requests
       - MAX_REQUESTS=400    # safety cap per thread
+      - RETENTION_DAYS=30   # auto-delete saved threads after N days (0 = keep forever)
     shm_size: "512mb"
