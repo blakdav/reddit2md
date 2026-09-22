@@ -1,0 +1,5 @@
+.git
+.github
+reddit_state.json
+__pycache__
+*.md

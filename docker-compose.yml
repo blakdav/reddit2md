@@ -1,0 +1,14 @@
+services:
+  Reddit2Md:
+    image: ghcr.io/blakdav/reddit2md:latest
+    container_name: Reddit2Md
+    restart: unless-stopped
+    ports:
+      - "8095:8000"
+    volumes:
+      - /opt/docker/reddit2md:/data
+    environment:
+      - TZ=America/Los_Angeles
+      - REQUEST_DELAY=1.0   # seconds between Reddit requests
+      - MAX_REQUESTS=400    # safety cap per thread
+    shm_size: "512mb"

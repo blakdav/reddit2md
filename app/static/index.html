@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reddit2md</title>
+<style>
+  :root {
+    --bg: #111418; --panel: #1a1f25; --border: #2b323b; --text: #e3e7ec;
+    --muted: #8b95a1; --accent: #ff6a3d; --ok: #4cc38a; --err: #f06464;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type=url] { flex: 1 1 400px; min-width: 0; }
+  input, select, button, textarea {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { cursor: pointer; background: var(--border); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  label { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; }
+  .opts { margin-top: 12px; }
+  #status { margin: 14px 0 0; min-height: 22px; font-size: 14px; color: var(--muted); }
+  #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+  .out { margin-top: 16px; display: none; }
+  .out.show { display: block; }
+  .out .row { justify-content: space-between; margin-bottom: 8px; }
+  #meta { color: var(--muted); font-size: 14px; }
+  textarea { width: 100%; height: 60vh; resize: vertical;
+             font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .session { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .session button { padding: 4px 10px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>reddit<span>2</span>md</h1>
+  <p class="sub">Paste a Reddit thread URL. All comments are expanded and converted to Markdown.</p>
+
+  <div class="panel">
+    <form id="form" class="row">
+      <input type="url" id="url" placeholder="https://www.reddit.com/r/.../comments/..." required autofocus>
+      <button class="primary" id="go" type="submit">Convert</button>
+    </form>
+    <div class="row opts">
+      <label>Sort
+        <select id="sort">
+          <option value="confidence">Best</option>
+          <option value="top">Top</option>
+          <option value="new">New</option>
+          <option value="old">Old</option>
+          <option value="controversial">Controversial</option>
+          <option value="qa">Q&amp;A</option>
+        </select>
+      </label>
+      <label>Mode
+        <select id="mode">
+          <option value="auto">Auto</option>
+          <option value="json">JSON only</option>
+          <option value="dom">Browser clicks only</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="scores" checked> Include scores</label>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div class="out" id="out">
+    <div class="row">
+      <span id="meta"></span>
+      <span class="row">
+        <button id="copy" type="button">Copy</button>
+        <button id="dl" type="button">Download .md</button>
+      </span>
+    </div>
+    <textarea id="md" readonly></textarea>
+  </div>
+
+  <div class="session row">
+    <button id="check" type="button">Check session</button>
+    <span id="sess"></span>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let title = "thread";
+
+function setStatus(msg, cls = "") { $("status").textContent = msg; $("status").className = cls; }
+
+async function poll(job) {
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    const r = await fetch(`/api/job/${job}`);
+    const j = await r.json();
+    if (!r.ok) { setStatus(j.error || "Job lost", "err"); return; }
+    if (j.status === "running") { setStatus(`${j.progress} (${j.elapsed}s)`); continue; }
+    if (j.status === "error") { setStatus(j.error, "err"); return; }
+    title = j.title || "thread";
+    $("md").value = j.markdown;
+    const exp = j.expected != null ? ` of ${j.expected} reported` : "";
+    $("meta").textContent = `${j.count} comments${exp} · ${j.mode.toUpperCase()} mode · ${j.elapsed}s`;
+    $("out").classList.add("show");
+    setStatus("Done", "ok");
+    return;
+  }
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("go").disabled = true;
+  $("out").classList.remove("show");
+  setStatus("Starting");
+  try {
+    const r = await fetch("/api/convert", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({url: $("url").value, sort: $("sort").value,
+                            mode: $("mode").value, scores: $("scores").checked}),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    await poll(j.job);
+  } catch (err) {
+    setStatus(err.message, "err");
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("md").value); }
+  catch { $("md").select(); document.execCommand("copy"); }
+  setStatus("Copied to clipboard", "ok");
+});
+
+$("dl").addEventListener("click", () => {
+  const name = title.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 80) || "thread";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("md").value], {type: "text/markdown"}));
+  a.download = `${name}.md`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("check").addEventListener("click", async () => {
+  $("check").disabled = true;
+  $("sess").textContent = "Checking...";
+  try {
+    const j = await (await fetch("/api/session")).json();
+    if (j.error) throw new Error(j.error);
+    if (!j.state_file) $("sess").textContent = "No session file found. Running logged out.";
+    else $("sess").textContent = (j.logged_in ? `Logged in as ${j.user}` : "Session file present but NOT logged in (expired?)")
+      + ` · JSON endpoints ${j.json_ok ? "OK" : "blocked (DOM mode will be used)"}`;
+  } catch (err) { $("sess").textContent = err.message; }
+  $("check").disabled = false;
+});
+</script>
+</body>
+</html>
