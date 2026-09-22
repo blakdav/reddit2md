@@ -38,7 +38,11 @@
   textarea { width: 100%; height: 60vh; resize: vertical;
              font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .session { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .session strong { color: var(--text); margin-right: 4px; }
   .session button { padding: 4px 10px; font-size: 13px; }
+  #sess { margin-top: 8px; }
+  .ck { margin-top: 10px; }
+  .ck input { flex: 1 1 300px; min-width: 0; padding: 6px 10px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -85,9 +89,19 @@
     <textarea id="md" readonly></textarea>
   </div>
 
-  <div class="session row">
-    <button id="check" type="button">Check session</button>
-    <span id="sess"></span>
+  <div class="panel session">
+    <div class="row">
+      <strong>Reddit session</strong>
+      <button id="check" type="button">Check</button>
+      <button id="upbtn" type="button">Upload cookies</button>
+      <button id="rm" type="button">Remove</button>
+      <input type="file" id="upfile" accept=".json,.txt,application/json,text/plain" hidden>
+    </div>
+    <form id="ckform" class="row ck">
+      <input type="password" id="ck" placeholder="Paste reddit_session cookie value" autocomplete="off">
+      <button type="submit">Save</button>
+    </form>
+    <div id="sess">Paste the reddit_session value from your browser's DevTools, or upload a cookie export file.</div>
   </div>
 </main>
 
@@ -149,6 +163,46 @@ $("dl").addEventListener("click", () => {
   a.download = `${name}.md`;
   a.click();
   URL.revokeObjectURL(a.href);
+});
+
+$("upbtn").addEventListener("click", () => $("upfile").click());
+
+$("upfile").addEventListener("change", async () => {
+  const file = $("upfile").files[0];
+  if (!file) return;
+  $("sess").textContent = "Uploading...";
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const r = await fetch("/api/session/upload", {method: "POST", body: fd});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    $("sess").textContent = `Saved ${j.cookies} Reddit cookies. Checking login...`;
+    $("check").click();
+  } catch (err) { $("sess").textContent = err.message; }
+  $("upfile").value = "";
+});
+
+$("ckform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = $("ck").value.trim();
+  if (!v) return;
+  $("sess").textContent = "Saving...";
+  try {
+    const r = await fetch("/api/session/cookie", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                  body: JSON.stringify({reddit_session: v})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    $("ck").value = "";
+    $("sess").textContent = "Saved. Checking login...";
+    $("check").click();
+  } catch (err) { $("sess").textContent = err.message; }
+});
+
+$("rm").addEventListener("click", async () => {
+  if (!confirm("Remove the saved Reddit session?")) return;
+  await fetch("/api/session", {method: "DELETE"});
+  $("sess").textContent = "Session removed. Running logged out.";
 });
 
 $("check").addEventListener("click", async () => {

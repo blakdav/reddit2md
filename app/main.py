@@ -1,12 +1,15 @@
+import json
 import logging
+import os
 import threading
 import time
 import uuid
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
+from cookies import CookieError, from_values, to_storage_state
 from render import render
-from scraper import ScrapeError, scrape, session_status
+from scraper import STATE_FILE, ScrapeError, scrape, session_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("reddit2md")
@@ -92,6 +95,47 @@ def session():
             return jsonify(session_status())
     except Exception as e:
         return jsonify(error=str(e)), 500
+
+
+def _write_state(state):
+    tmp = STATE_FILE + ".tmp"
+    with browser_lock:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as out:
+            json.dump(state, out)
+        os.replace(tmp, STATE_FILE)
+    log.info("Session file replaced (%d reddit cookies)", len(state["cookies"]))
+
+
+@app.post("/api/session/upload")
+def session_upload():
+    f = request.files.get("file")
+    if not f:
+        return jsonify(error="No file uploaded"), 400
+    try:
+        state, n = to_storage_state(f.read(2_000_000))
+    except CookieError as e:
+        return jsonify(error=str(e)), 400
+    _write_state(state)
+    return jsonify(ok=True, cookies=n)
+
+
+@app.post("/api/session/cookie")
+def session_cookie():
+    try:
+        state, n = from_values(request.get_json(silent=True) or {})
+    except CookieError as e:
+        return jsonify(error=str(e)), 400
+    _write_state(state)
+    return jsonify(ok=True, cookies=n)
+
+
+@app.delete("/api/session")
+def session_delete():
+    with browser_lock:
+        if os.path.exists(STATE_FILE):
+            os.remove(STATE_FILE)
+    return jsonify(ok=True)
 
 
 @app.get("/api/health")

@@ -1,7 +1,7 @@
 services:
-  Reddit2Md:
+  reddit2md:
     image: ghcr.io/blakdav/reddit2md:latest
-    container_name: Reddit2Md
+    container_name: reddit2md
     restart: unless-stopped
     ports:
       - "8095:8000"
