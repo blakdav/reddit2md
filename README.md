@@ -15,7 +15,15 @@ Nested replies are rendered as nested blockquotes.
 
 ## Saved threads
 
-Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/`, one JSON file per thread. Converting the same thread again loads the saved copy instantly without contacting Reddit; click **Refresh** to fetch a new copy. The sidebar lists saved threads with title, subreddit, save date, comment count and a link back to Reddit. On phones the sidebar opens from the menu button. Each thread also has its own address (`http://<server>:8095/#t=<id>`) you can bookmark.
+Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/`, one JSON file per thread. Converting the same thread again loads the saved copy instantly without contacting Reddit.
+
+**Update** fetches the thread again and merges it into the saved copy:
+
+- Comments added since the previous update get a **new** badge, and **New only** shows just those (with their parent comments for context).
+- Comments deleted by their author or removed by moderators keep the saved text, labelled **deleted on Reddit** or **removed by mods**. Comments that vanished entirely are kept and labelled **no longer on Reddit**. The same applies to the post body.
+- Changed comments are labelled **edited**, and scores are updated.
+
+Badges appear only in the web view. Copy and Download give clean Markdown (the kept text is included, without labels). An update fetches the whole thread, so it costs the same number of Reddit requests as the first conversion. The sidebar lists saved threads with title, subreddit, save date, comment count and a link back to Reddit. On phones the sidebar opens from the menu button. Each thread also has its own address (`http://<server>:8095/#t=<id>`) you can bookmark.
 
 Saved threads are deleted automatically once they are older than the auto-delete setting (default 30 days, based on when they were last fetched), checked hourly.
 

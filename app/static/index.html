@@ -111,6 +111,12 @@
   #rendered pre { background: var(--panel); padding: 10px; border-radius: 6px; overflow: auto; }
   #rendered pre code { padding: 0; }
   #rendered table { border-collapse: collapse; display: block; overflow-x: auto; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+           padding: 1px 7px; border-radius: 999px; margin-left: 4px; vertical-align: 1px; line-height: 1.6; }
+  .b-new { background: var(--accent); color: #111; }
+  .b-edited { background: #2c3440; color: #b8c4d2; }
+  .b-deleted, .b-removed, .b-gone { background: #3a2222; color: #f3b3b3; }
+  #newOnly.on { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
   #rendered td, #rendered th { border: 1px solid var(--border); padding: 4px 8px; }
 
   /* ---------- settings ---------- */
@@ -238,7 +244,8 @@
           <button id="copy" type="button">Copy</button>
           <button id="dl" type="button">Download</button>
           <a id="reddit" class="btn" target="_blank" rel="noopener noreferrer">Reddit &#8599;</a>
-          <button id="refresh" type="button" title="Fetch this thread from Reddit again">Refresh</button>
+          <button id="newOnly" type="button" title="Show only comments added in the last update">New only</button>
+          <button id="refresh" type="button" title="Fetch new comments and merge them into the saved copy">Update</button>
         </div>
       </div>
       <textarea id="md" readonly></textarea>
@@ -311,6 +318,7 @@ let current = null;      // meta of the thread on screen
 let threads = [];        // saved thread list
 let tz;                  // display time zone from server settings
 let view = "rendered";
+let newOnly = false;     // "New only" filter for the open thread
 try { view = localStorage.getItem("r2m-view") || "rendered"; } catch {}
 
 function fmtDate(ts) {
@@ -385,15 +393,22 @@ $("vRaw").addEventListener("click", () => setView("raw"));
 
 // ------------------------------------------------------------ open a saved thread
 async function openThread(id) {
-  const r = await fetch(`/api/threads/${encodeURIComponent(id)}?scores=${$("scores").checked ? 1 : 0}`);
+  if (!current || current.id !== id) newOnly = false;
+  const r = await fetch(`/api/threads/${encodeURIComponent(id)}?scores=${$("scores").checked ? 1 : 0}&new=${newOnly ? 1 : 0}`);
   const j = await r.json();
   if (!r.ok) { setStatus(j.error || "Could not load thread", "err"); current = null; showView("home"); renderList(); return; }
   current = j.meta;
   $("md").value = j.markdown;
   $("rendered").innerHTML = j.html;
   $("rendered").scrollTop = 0; $("md").scrollTop = 0;
-  const exp = current.expected != null ? ` of ${current.expected}` : "";
-  $("meta").textContent = `Saved ${fmtDate(current.saved_at)} · ${current.count}${exp} comments · ${SORT_NAMES[current.sort] || "Best"}`;
+  const updated = current.first_saved && current.saved_at - current.first_saved > 1;
+  const dates = updated ? `First saved ${fmtDate(current.first_saved)} · Updated ${fmtDate(current.saved_at)}` : `Saved ${fmtDate(current.saved_at)}`;
+  $("meta").textContent = `${dates} · ${current.count} comments · ${SORT_NAMES[current.sort] || "Best"}`;
+  const n = current.new_count || 0;
+  $("newOnly").textContent = n ? `New only (${n})` : "New only";
+  $("newOnly").disabled = !n;
+  $("newOnly").classList.toggle("on", newOnly);
+  $("newOnly").title = n ? `Show only the ${n} comments added in the last update` : "No new comments from the last update";
   $("reddit").href = current.permalink;
   document.title = `${current.title} · reddit2md`;
   renderList();
@@ -414,7 +429,7 @@ async function poll(job) {
 
 async function convert(url, refresh) {
   $("go").disabled = $("refresh").disabled = true;
-  setStatus(refresh ? "Refreshing from Reddit" : "Starting");
+  setStatus(refresh ? "Fetching new comments from Reddit" : "Starting");
   try {
     const r = await fetch("/api/convert", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -425,16 +440,26 @@ async function convert(url, refresh) {
     if (j.cached) {
       go(`#t=${j.id}`);
       const t = threads.find(x => x.id === j.id);
-      setStatus(`Loaded saved copy${t ? " from " + fmtDate(t.saved_at) : ""}. Click Refresh to fetch it again.`, "ok");
-      toast("Loaded saved copy. Use Refresh to fetch it again.");
+      setStatus(`Loaded saved copy${t ? " from " + fmtDate(t.saved_at) : ""}. Click Update to fetch new comments.`, "ok");
+      toast("Loaded saved copy. Use Update to fetch new comments.");
       $("url").value = "";
       return;
     }
     const done = await poll(j.job);
     await loadList();
+    newOnly = false;
     go(`#t=${done.id}`);
-    setStatus(`Done in ${done.elapsed}s. Saved.`, "ok");
-    toast(`Converted and saved in ${done.elapsed}s`);
+    if (done.update) {
+      const u = done.update, parts = [];
+      if (u.new) parts.push(`${u.new} new`);
+      if (u.edited) parts.push(`${u.edited} edited`);
+      if (u.kept_deleted) parts.push(`${u.kept_deleted} deleted or removed kept`);
+      const msg = parts.length ? `Updated: ${parts.join(", ")}` : "Updated: no changes";
+      setStatus(`${msg} (${done.elapsed}s)`, "ok"); toast(msg);
+    } else {
+      setStatus(`Done in ${done.elapsed}s. Saved.`, "ok");
+      toast(`Converted and saved in ${done.elapsed}s`);
+    }
     $("url").value = "";
     refreshSession(true);
   } catch (err) {
@@ -448,6 +473,7 @@ async function convert(url, refresh) {
 $("form").addEventListener("submit", (e) => { e.preventDefault(); convert($("url").value.trim(), false); });
 $("refresh").addEventListener("click", () => current && convert(current.permalink, true));
 $("scores").addEventListener("change", () => current && openThread(current.id));
+$("newOnly").addEventListener("click", () => { if (!current) return; newOnly = !newOnly; openThread(current.id); });
 
 // ------------------------------------------------------------ copy / download
 async function copyRendered() {

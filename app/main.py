@@ -10,7 +10,7 @@ from flask import Flask, jsonify, make_response, request, send_from_directory
 import settings
 import storage
 from cookies import CookieError, from_values, to_storage_state
-from render import render, to_html
+from render import count_new, render, to_html
 from scraper import POST_ID_RE, SHORT_RE, STATE_FILE, ScrapeError, scrape, session_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -73,7 +73,8 @@ def _run(jid, url, sort, mode):
         with browser_lock:
             result = scrape(url, sort=sort, mode=mode, progress=progress)
         has_id = POST_ID_RE.search(url) or SHORT_RE.search(url)
-        storage.save(result, source_url=None if has_id else url)
+        _, stats = storage.save(result, source_url=None if has_id else url)
+        job["update"] = stats
         update = {"logged_in": bool(result.get("user")), "user": result.get("user")}
         if result["mode"] == "json":
             update["json_ok"] = True
@@ -139,10 +140,13 @@ def thread_get(tid):
     if not data:
         return jsonify(error="Not found (it may have been auto-deleted)"), 404
     scores = request.args.get("scores", "1") != "0"
-    md = render({"post": data["post"], "comments": data["comments"], "count": data["count"]},
-                scores=scores, tz=settings.load()["timezone"])
+    new_only = request.args.get("new") == "1"
+    tz = settings.load()["timezone"]
+    md = render(data, scores=scores, tz=tz, new_only=new_only)
+    web = render(data, scores=scores, tz=tz, web=True, new_only=new_only)
     meta = {k: data.get(k) for k in storage.META_KEYS}
-    return jsonify(meta=meta, markdown=md, html=to_html(md))
+    meta["new_count"] = count_new(data)
+    return jsonify(meta=meta, markdown=md, html=to_html(web))
 
 
 @app.delete("/api/threads/<tid>")

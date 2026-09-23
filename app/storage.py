@@ -7,6 +7,8 @@ import re
 import threading
 import time
 
+import merge
+
 log = logging.getLogger("reddit2md")
 
 THREADS_DIR = os.environ.get("THREADS_DIR", "/data/threads")
@@ -14,7 +16,8 @@ INDEX = os.path.join(THREADS_DIR, "index.json")
 ID_RE = re.compile(r"^[a-z0-9]{1,16}$")
 _lock = threading.Lock()
 
-META_KEYS = ("id", "title", "subreddit", "author", "permalink", "created", "saved_at", "count", "expected", "sort", "mode")
+META_KEYS = ("id", "title", "subreddit", "author", "permalink", "created", "saved_at", "first_saved", "prev_fetch",
+             "count", "expected", "sort", "mode", "new_count", "kept_deleted")
 
 
 def _path(tid):
@@ -66,13 +69,28 @@ def _rebuild_index():
 
 
 def save(result, source_url=None):
-    post = result["post"]
+    """Save a fetch. If the thread is already saved, merge into it and return update stats."""
+    now = time.time()
+    post, comments, count = result["post"], result["comments"], result["count"]
+    old = get(result["id"])
+    stats = None
+    if old:
+        comments, post, stats, count = merge.merge(old, comments, post, now,
+                                                   same_mode=old.get("mode") == result.get("mode"))
+        first_saved = old.get("first_saved") or old.get("saved_at") or now
+        prev_fetch = old.get("saved_at")
+    else:
+        merge.stamp_new(comments, now)
+        first_saved, prev_fetch = now, None
     data = {
         "id": result["id"], "title": post.get("title"), "subreddit": post.get("subreddit"),
         "author": post.get("author"), "permalink": post.get("permalink"), "created": post.get("created"),
-        "saved_at": time.time(), "count": result["count"], "expected": post.get("num_comments"),
+        "saved_at": now, "first_saved": first_saved, "prev_fetch": prev_fetch,
+        "count": count, "expected": post.get("num_comments"),
         "sort": result.get("sort"), "mode": result.get("mode"),
-        "post": post, "comments": result["comments"],
+        "new_count": stats["new"] if stats else 0,
+        "kept_deleted": _kept(comments),
+        "post": post, "comments": comments,
     }
     with _lock:
         _write(_path(data["id"]), data)
@@ -81,7 +99,11 @@ def save(result, source_url=None):
         if source_url:
             idx["aliases"][source_url.strip()] = data["id"]
         _write(INDEX, idx)
-    return _meta(data)
+    return _meta(data), stats
+
+
+def _kept(nodes):
+    return sum((1 if n.get("status") else 0) + _kept(n["replies"]) for n in nodes)
 
 
 def get(tid):
