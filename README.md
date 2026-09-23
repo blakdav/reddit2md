@@ -15,13 +15,13 @@ Nested replies are rendered as nested blockquotes.
 
 ## Saved threads
 
-Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/`, one JSON file per thread. Converting the same thread again loads the saved copy instantly without contacting Reddit; click **Refresh** to fetch a new copy. The **Saved threads** list shows each thread's title, subreddit, save date, comment count and a link back to Reddit. Each thread also has its own address (`http://<server>:8095/#t=<id>`) you can bookmark.
+Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/`, one JSON file per thread. Converting the same thread again loads the saved copy instantly without contacting Reddit; click **Refresh** to fetch a new copy. The sidebar lists saved threads with title, subreddit, save date, comment count and a link back to Reddit. On phones the sidebar opens from the menu button. Each thread also has its own address (`http://<server>:8095/#t=<id>`) you can bookmark.
 
 Saved threads are deleted automatically once they are older than the auto-delete setting (default 30 days, based on when they were last fetched), checked hourly.
 
 ## Settings (web UI)
 
-Open **Settings** in the web UI to change:
+Open **Settings** (gear icon, top right) to change:
 
 - **Auto-delete saved threads:** days to keep saved threads. `0` keeps them forever. Lowering it deletes older threads immediately, after a confirmation.
 - **Time zone:** the zone used for comment times, post times and saved dates. Times are stored in UTC, so changing it re-renders every saved thread without re-fetching.
@@ -54,7 +54,7 @@ Open `http://<server>:8095`. It works logged out, but Reddit blocks anonymous re
 
 Accepted formats: Netscape `cookies.txt`, extension JSON exports (Cookie-Editor, EditThisCookie), and Playwright storage state. Only reddit.com cookies are kept. The session is stored at `/opt/docker/reddit2md/reddit_state.json` with mode 600.
 
-**Remove** deletes the saved session. When the session expires, **Check** will say so; export and upload again.
+The pill in the header shows the login state (green with your username, red when logged out or expired) and links to Settings. It is updated after every conversion and never contacts Reddit just to load the page. **Remove session** deletes the saved session.
 
 ## Environment variables
 

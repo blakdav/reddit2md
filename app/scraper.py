@@ -103,6 +103,17 @@ def _fetch_json(page, path, counter):
     raise ScrapeError(f"Gave up after repeated rate limiting on {path}")
 
 
+def _logged_in_user(page):
+    """Read the username from old.reddit's header, or None when logged out. No extra request."""
+    try:
+        user = page.locator("#header-bottom-right .user a").first
+        if user.count() and "login" not in (user.get_attribute("href") or ""):
+            return user.inner_text().strip() or None
+    except Exception:
+        pass
+    return None
+
+
 def resolve_post_id(page, url):
     url = url.strip()
     if not url:
@@ -337,6 +348,7 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None):
             post_id = resolve_post_id(page, url)
             progress(f"Thread ID {post_id}")
             page.goto(f"{BASE}/comments/{post_id}/", wait_until="domcontentloaded", timeout=60000)
+            user = _logged_in_user(page)
             used = mode
             if mode in ("auto", "json"):
                 try:
@@ -351,7 +363,8 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None):
             else:
                 post, comments, n = scrape_dom(page, post_id, sort, progress)
             _save_state(context)
-            return {"id": post_id.lower(), "post": post, "comments": comments, "count": n, "mode": used, "sort": sort}
+            return {"id": post_id.lower(), "post": post, "comments": comments, "count": n, "mode": used,
+                    "sort": sort, "user": user}
         finally:
             context.close()
             browser.close()
@@ -365,10 +378,8 @@ def session_status():
         try:
             page = context.new_page()
             page.goto(f"{BASE}/", wait_until="domcontentloaded", timeout=60000)
-            user = page.locator("#header-bottom-right .user a").first
-            if user.count() and "login" not in (user.get_attribute("href") or ""):
-                info["logged_in"] = True
-                info["user"] = user.inner_text().strip()
+            info["user"] = _logged_in_user(page)
+            info["logged_in"] = bool(info["user"])
             try:
                 _fetch_json(page, "/api/me.json", {"n": 0})
                 info["json_ok"] = True

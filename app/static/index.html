@@ -2,220 +2,315 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1f25">
 <title>reddit2md</title>
 <style>
   :root {
-    --bg: #111418; --panel: #1a1f25; --border: #2b323b; --text: #e3e7ec;
+    --bg: #111418; --panel: #1a1f25; --raised: #222932; --border: #2b323b; --text: #e3e7ec;
     --muted: #8b95a1; --accent: #ff6a3d; --ok: #4cc38a; --err: #f06464; --link: #6cb6ff;
+    --head: 54px; --side: 310px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  h1 span { color: var(--accent); }
-  .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
-  .panel:first-of-type { margin-top: 0; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  input[type=url] { flex: 1 1 400px; min-width: 0; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+         height: 100dvh; overflow: hidden; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   input, select, button, textarea, .btn {
     font: inherit; color: var(--text); background: var(--bg);
-    border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
   }
   input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  button, .btn { cursor: pointer; background: var(--border); text-decoration: none; }
-  .primary, .seg button.on { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  button, .btn { cursor: pointer; background: var(--border); text-decoration: none; white-space: nowrap; }
+  button:hover, .btn:hover { filter: brightness(1.15); }
   button:disabled { opacity: .5; cursor: default; }
-  label { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; }
-  .opts { margin-top: 12px; }
-  #status { margin: 14px 0 0; min-height: 22px; font-size: 14px; color: var(--muted); }
-  #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+  .primary, .seg button.on { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .muted { color: var(--muted); }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+  .icon { background: transparent; border-color: transparent; padding: 6px 9px; font-size: 18px; line-height: 1; }
+  .icon:hover, .icon.on { background: var(--raised); }
 
-  .out { margin-top: 16px; display: none; }
-  .out.show { display: block; }
-  .bar { justify-content: space-between; margin-bottom: 8px; }
-  #meta { color: var(--muted); font-size: 14px; }
+  /* ---------- header ---------- */
+  header.top { height: var(--head); flex: none; display: flex; align-items: center; gap: 8px;
+               padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .logo { font-size: 19px; font-weight: 700; text-decoration: none; color: var(--text); margin-right: auto; }
+  .logo span { color: var(--accent); }
+  #menuBtn { display: none; }
+  .pill { text-decoration: none; display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px;
+          font-size: 13px; background: var(--bg); border: 1px solid var(--border); color: var(--muted); max-width: 220px; }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .pill .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill.good .dot { background: var(--ok); } .pill.good { color: var(--text); }
+  .pill.bad .dot { background: var(--err); } .pill.bad { color: var(--err); border-color: #5a2d2d; }
+
+  /* ---------- layout ---------- */
+  .layout { flex: 1; display: flex; min-height: 0; }
+  aside.side { width: var(--side); flex: none; display: flex; flex-direction: column; min-height: 0;
+               background: var(--panel); border-right: 1px solid var(--border); }
+  .side-top { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  #newBtn { width: 100%; }
+  #filter { width: 100%; font-size: 14px; }
+  #list { flex: 1; overflow: auto; padding: 0 8px 8px; }
+  .side-foot { padding: 9px 14px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+  .item { display: flex; gap: 6px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+  .item:hover { background: var(--raised); }
+  .item.active { background: var(--raised); box-shadow: inset 3px 0 0 var(--accent); }
+  .item .info { flex: 1; min-width: 0; }
+  .item .t { font-weight: 600; font-size: 14px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2;
+             -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+  .item .m { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .item .acts { display: flex; flex-direction: column; gap: 2px; opacity: .55; }
+  .item:hover .acts, .item.active .acts { opacity: 1; }
+  .item .acts a, .item .acts button { font-size: 13px; padding: 2px 6px; border: 0; background: transparent;
+                                       color: var(--muted); text-decoration: none; border-radius: 5px; }
+  .item .acts a:hover { color: var(--link); background: var(--bg); }
+  .item .acts button:hover { color: var(--err); background: var(--bg); }
+  .empty { color: var(--muted); font-size: 14px; padding: 12px; }
+  .backdrop { display: none; }
+
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .convert { flex: none; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .convert form input { flex: 1 1 260px; min-width: 0; }
+  .opts { margin-top: 8px; font-size: 13px; }
+  .opts label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  .opts select { padding: 4px 8px; font-size: 13px; }
+  #status { min-height: 20px; font-size: 13px; margin-top: 6px; color: var(--muted); }
+
+  .view { flex: 1; min-height: 0; display: none; flex-direction: column; }
+  .view.on { display: flex; }
+
+  /* ---------- home ---------- */
+  #home { overflow: auto; padding: 32px 20px; }
+  .welcome { max-width: 560px; margin: 0 auto; color: var(--muted); }
+  .welcome h2 { color: var(--text); font-size: 20px; margin: 0 0 8px; }
+  .welcome ol { padding-left: 20px; line-height: 1.8; }
+  .notice { background: #2a1d1d; border: 1px solid #5a2d2d; color: #f3b3b3; border-radius: 8px; padding: 10px 12px; margin-top: 16px; }
+  .notice a { color: var(--accent); }
+
+  /* ---------- reader ---------- */
+  .toolbar { flex: none; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+             padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #meta { font-size: 13px; color: var(--muted); }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tools button, .tools .btn { padding: 6px 11px; font-size: 14px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; background: var(--bg); color: var(--muted); padding: 8px 14px; }
-  textarea { width: 100%; height: 60vh; resize: vertical;
-             font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  #rendered { display: none; height: 60vh; overflow: auto; resize: vertical; padding: 4px 20px;
-              background: var(--bg); border: 1px solid var(--border); border-radius: 8px; line-height: 1.55; }
+  .seg button { border: 0; border-radius: 0; background: var(--bg); color: var(--muted); }
+  #md { flex: 1; min-height: 0; width: 100%; border: 0; border-radius: 0; resize: none; padding: 16px;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg); }
+  #rendered { flex: 1; min-height: 0; overflow: auto; line-height: 1.6; display: none; overflow-wrap: anywhere;
+              padding: 8px max(20px, calc((100% - 820px) / 2)) 48px; }
   .view-rendered #rendered { display: block; }
   .view-rendered #md { display: none; }
-  #rendered h1 { font-size: 21px; margin: 16px 0 8px; }
-  #rendered h2 { font-size: 17px; margin: 20px 0 8px; color: var(--muted); }
+  #rendered h1 { font-size: 22px; line-height: 1.3; margin: 18px 0 8px; }
+  #rendered h2 { font-size: 16px; margin: 22px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   #rendered p { margin: 6px 0; }
-  #rendered a { color: var(--link); }
+  #rendered a { color: var(--link); word-break: break-word; }
   #rendered hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
   #rendered blockquote { margin: 8px 0 8px 2px; padding: 2px 0 2px 14px; border-left: 2px solid #3a4450; }
   #rendered code { background: var(--panel); padding: 1px 4px; border-radius: 4px; font-size: 13px; }
   #rendered pre { background: var(--panel); padding: 10px; border-radius: 6px; overflow: auto; }
   #rendered pre code { padding: 0; }
-  #rendered table { border-collapse: collapse; } #rendered td, #rendered th { border: 1px solid var(--border); padding: 4px 8px; }
+  #rendered table { border-collapse: collapse; display: block; overflow-x: auto; }
+  #rendered td, #rendered th { border: 1px solid var(--border); padding: 4px 8px; }
 
-  .lib-head { justify-content: space-between; }
-  .lib-head h2 { font-size: 16px; margin: 0; }
-  .lib-head .note { color: var(--muted); font-size: 13px; }
-  #filter { width: 100%; margin: 10px 0 6px; padding: 7px 10px; font-size: 14px; }
-  #list { max-height: 420px; overflow: auto; }
-  .item { display: flex; gap: 10px; align-items: center; padding: 9px 8px; border-top: 1px solid var(--border); }
-  .item:first-child { border-top: 0; }
-  .item.active { background: #222932; border-radius: 6px; }
-  .item .info { flex: 1; min-width: 0; }
-  .item .t { color: var(--text); text-decoration: none; font-weight: 600; display: block;
-             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .item .t:hover { color: var(--accent); }
-  .item .m { color: var(--muted); font-size: 13px; }
-  .item a.rd { color: var(--link); font-size: 13px; text-decoration: none; white-space: nowrap; }
-  .item button { padding: 3px 9px; font-size: 13px; background: transparent; color: var(--muted); }
-  .item button:hover { color: var(--err); border-color: var(--err); }
-  .empty { color: var(--muted); font-size: 14px; padding: 8px; }
+  /* ---------- settings ---------- */
+  #settings { overflow: auto; padding: 20px 16px 48px; }
+  .card { max-width: 760px; margin: 0 auto 16px; background: var(--panel); border: 1px solid var(--border);
+          border-radius: 10px; padding: 18px; }
+  .card h2 { font-size: 17px; margin: 0 0 14px; }
+  .field { display: grid; grid-template-columns: 200px 1fr; gap: 8px 14px; align-items: center; margin-bottom: 14px; }
+  .field > label { font-weight: 600; font-size: 14px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  #retDays { width: 100px; }
+  #tzSel { max-width: 100%; }
+  #setmsg, #sess { font-size: 13px; }
+  .ck input { flex: 1 1 260px; min-width: 0; }
+  details.help { margin-top: 14px; font-size: 14px; }
+  details.help summary { cursor: pointer; font-weight: 600; }
+  details.help ol { margin: 8px 0; padding-left: 20px; line-height: 1.7; }
+  details.help p { margin: 8px 0 0; color: var(--muted); }
+  details.help code, details.help kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+                                         padding: 0 4px; font-size: 12px; }
 
-  details.settings > summary { cursor: pointer; font-size: 16px; font-weight: 700; }
-  .settings .grid { display: grid; grid-template-columns: max-content 1fr; gap: 12px 14px; align-items: center; margin-top: 14px; }
-  .settings .grid label { color: var(--text); }
-  .settings input[type=number] { width: 100px; padding: 7px 10px; }
-  .settings select { padding: 7px 10px; max-width: 100%; }
-  .settings .hint { color: var(--muted); font-size: 13px; }
-  #setmsg { font-size: 13px; color: var(--muted); }
-  #setmsg.ok { color: var(--ok); } #setmsg.err { color: var(--err); }
-  @media (max-width: 600px) { .settings .grid { grid-template-columns: 1fr; } }
-  .session { font-size: 13px; color: var(--muted); }
-  .session strong { color: var(--text); margin-right: 4px; }
-  .session button { padding: 4px 10px; font-size: 13px; }
-  #sess { margin-top: 8px; }
-  .ck { margin-top: 10px; }
-  .ck input { flex: 1 1 300px; min-width: 0; padding: 6px 10px; font-size: 13px; }
-  details.help { margin-top: 12px; }
-  details.help summary { cursor: pointer; color: var(--text); }
-  details.help ol { margin: 8px 0; padding-left: 20px; line-height: 1.6; }
-  details.help p { margin: 8px 0 0; }
-  details.help code, details.help kbd { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 12px; }
+  .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px);
+           background: var(--raised); border: 1px solid var(--border); color: var(--text); padding: 9px 16px;
+           border-radius: 999px; font-size: 14px; opacity: 0; pointer-events: none; transition: all .2s; z-index: 30;
+           max-width: calc(100vw - 32px); box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.err { border-color: #5a2d2d; color: var(--err); }
+
+  /* ---------- mobile ---------- */
+  @media (max-width: 860px) {
+    #menuBtn { display: inline-flex; }
+    body.reading #convert { display: none; }   /* more room to read; the URL bar is on the New thread screen */
+    aside.side { position: fixed; top: var(--head); bottom: 0; left: 0; z-index: 20; width: min(86vw, 340px);
+                 transform: translateX(-100%); transition: transform .2s ease; }
+    body.drawer aside.side { transform: none; box-shadow: 8px 0 24px rgba(0,0,0,.4); }
+    .backdrop { position: fixed; inset: var(--head) 0 0 0; background: rgba(0,0,0,.5); z-index: 15; }
+    body.drawer .backdrop { display: block; }
+    .pill { max-width: 150px; }
+    .convert { padding: 10px 12px; }
+    .toolbar { padding: 8px 12px; }
+    #meta { width: 100%; }
+    #rendered { padding: 8px 14px 40px; }
+    .field { grid-template-columns: 1fr; }
+    #settings { padding: 12px 10px 40px; }
+    .card { padding: 14px; }
+    .item .acts { opacity: 1; }
+    /* 16px inputs stop iOS from zooming on focus */
+    input, select, textarea { font-size: 16px !important; }
+  }
+  @media (max-width: 420px) {
+    .logo { font-size: 17px; }
+    .pill .txt { display: none; }
+    .pill { padding: 8px; }
+  }
 </style>
 </head>
 <body>
-<main>
-  <h1>reddit<span>2</span>md</h1>
-  <p class="sub">Paste a Reddit thread URL. All comments are expanded, converted to Markdown, and saved here.</p>
+<header class="top">
+  <button class="icon" id="menuBtn" type="button" aria-label="Saved threads">&#9776;</button>
+  <a class="logo" href="#">reddit<span>2</span>md</a>
+  <a class="pill" id="pill" href="#settings" title="Reddit session"><span class="dot"></span><span class="txt">Checking...</span></a>
+  <a class="icon btn" id="gear" href="#settings" aria-label="Settings" title="Settings">&#9881;</a>
+</header>
 
-  <div class="panel">
-    <form id="form" class="row">
-      <input type="url" id="url" placeholder="https://www.reddit.com/r/.../comments/..." required autofocus>
-      <button class="primary" id="go" type="submit">Convert</button>
-    </form>
-    <div class="row opts">
-      <label>Sort
-        <select id="sort">
-          <option value="confidence">Best</option>
-          <option value="top">Top</option>
-          <option value="new">New</option>
-          <option value="old">Old</option>
-          <option value="controversial">Controversial</option>
-          <option value="qa">Q&amp;A</option>
-        </select>
-      </label>
-      <label>Mode
-        <select id="mode">
-          <option value="auto">Auto</option>
-          <option value="json">JSON only</option>
-          <option value="dom">Browser clicks only</option>
-        </select>
-      </label>
-      <label><input type="checkbox" id="scores" checked> Include scores</label>
+<div class="layout">
+  <aside class="side" id="side">
+    <div class="side-top">
+      <button class="primary" id="newBtn" type="button">+ New thread</button>
+      <input type="search" id="filter" placeholder="Search saved threads">
     </div>
-    <div id="status"></div>
-  </div>
-
-  <div class="out" id="out">
-    <div class="row bar">
-      <span id="meta"></span>
-      <span class="row">
-        <span class="seg">
-          <button id="vRendered" type="button">Rendered</button>
-          <button id="vRaw" type="button">Raw</button>
-        </span>
-        <button id="copy" type="button">Copy</button>
-        <button id="dl" type="button">Download .md</button>
-        <a id="reddit" class="btn" target="_blank" rel="noopener noreferrer">Reddit &#8599;</a>
-        <button id="refresh" type="button" title="Fetch this thread from Reddit again">Refresh</button>
-      </span>
-    </div>
-    <textarea id="md" readonly></textarea>
-    <div id="rendered"></div>
-  </div>
-
-  <div class="panel">
-    <div class="row lib-head">
-      <h2>Saved threads <span id="libcount" class="note"></span></h2>
-      <span id="retention" class="note"></span>
-    </div>
-    <input type="search" id="filter" placeholder="Filter by title or subreddit">
     <div id="list"></div>
-  </div>
+    <div class="side-foot" id="retention"></div>
+  </aside>
+  <div class="backdrop" id="backdrop"></div>
 
-  <div class="panel">
-    <details class="settings" id="settingsBox">
-      <summary>Settings</summary>
-      <div class="grid">
-        <label for="retDays">Auto-delete saved threads</label>
-        <div class="row">
-          <input type="number" id="retDays" min="0" max="3650" step="1">
-          <span class="hint">days after they were last fetched. 0 keeps them forever.</span>
-        </div>
-        <label for="tzSel">Time zone</label>
-        <div class="row">
-          <select id="tzSel"></select>
-          <button type="button" id="tzBrowser">Use this browser's zone</button>
-        </div>
+  <main>
+    <div class="convert" id="convert">
+      <form id="form" class="row">
+        <input type="url" id="url" placeholder="Paste a Reddit thread URL" required>
+        <button class="primary" id="go" type="submit">Convert</button>
+      </form>
+      <div class="row opts">
+        <label>Sort
+          <select id="sort">
+            <option value="confidence">Best</option>
+            <option value="top">Top</option>
+            <option value="new">New</option>
+            <option value="old">Old</option>
+            <option value="controversial">Controversial</option>
+            <option value="qa">Q&amp;A</option>
+          </select>
+        </label>
+        <label>Mode
+          <select id="mode">
+            <option value="auto">Auto</option>
+            <option value="json">JSON only</option>
+            <option value="dom">Browser clicks</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="scores" checked> Scores</label>
       </div>
-      <div class="row" style="margin-top:14px">
-        <button type="button" class="primary" id="saveSettings">Save settings</button>
-        <span id="setmsg"></span>
-      </div>
-    </details>
-  </div>
-
-  <div class="panel session">
-    <div class="row">
-      <strong>Reddit session</strong>
-      <button id="check" type="button">Check</button>
-      <button id="upbtn" type="button">Upload cookies</button>
-      <button id="rm" type="button">Remove</button>
-      <input type="file" id="upfile" accept=".json,.txt,application/json,text/plain" hidden>
+      <div id="status"></div>
     </div>
-    <form id="ckform" class="row ck">
-      <input type="password" id="ck" placeholder="Paste reddit_session cookie value" autocomplete="off">
-      <button type="submit">Save</button>
-    </form>
-    <div id="sess">Paste the reddit_session value from your browser's DevTools, or upload a cookie export file.</div>
-    <details class="help">
-      <summary>How to get your Reddit cookie</summary>
-      <ol>
-        <li>Open <code>reddit.com</code> in your browser and make sure you are logged in.</li>
-        <li>Press <kbd>F12</kbd> (Mac: <kbd>Cmd</kbd>+<kbd>Option</kbd>+<kbd>I</kbd>) to open DevTools.</li>
-        <li>Chrome / Edge: open the <b>Application</b> tab, then <b>Cookies</b> &gt; <code>https://www.reddit.com</code>.<br>
-            Firefox: open the <b>Storage</b> tab, then <b>Cookies</b> &gt; <code>https://www.reddit.com</code>.</li>
-        <li>Type <code>reddit_session</code> in the <b>Filter</b> box. The list is alphabetical, so it is near the bottom otherwise.</li>
-        <li>Click the row and copy the full value from the preview pane below the table. It is a long string, often starting with <code>eyJ</code>.</li>
-        <li>Paste it in the field above and click <b>Save</b>. It checks the login automatically.</li>
-      </ol>
-      <p><b>If you cannot find it:</b> open the <b>Network</b> tab, reload the page, click the first request, and under <b>Request Headers</b> find <b>Cookie</b>. Copy the text between <code>reddit_session=</code> and the next <code>;</code>.</p>
-      <p><b>Alternative:</b> export cookies with an extension such as Get cookies.txt LOCALLY, use <b>Upload cookies</b>, then delete the exported file.</p>
-      <p>Treat the value like a password. Do not save it anywhere else. Sessions last weeks to months; when <b>Check</b> reports you are logged out, repeat these steps.</p>
-    </details>
-  </div>
-</main>
+
+    <section class="view" id="home">
+      <div class="welcome">
+        <h2>Convert a Reddit thread</h2>
+        <ol>
+          <li>Paste a thread URL above and click <b>Convert</b>. Share links and old.reddit links work too.</li>
+          <li>Every comment is expanded and the thread is saved on the server.</li>
+          <li>Saved threads are in the sidebar. Converting one again loads the saved copy instantly.</li>
+        </ol>
+        <div class="notice" id="homeNotice" hidden></div>
+      </div>
+    </section>
+
+    <section class="view" id="reader">
+      <div class="toolbar" id="toolbar">
+        <span id="meta"></span>
+        <div class="tools">
+          <span class="seg">
+            <button id="vRendered" type="button">Rendered</button>
+            <button id="vRaw" type="button">Raw</button>
+          </span>
+          <button id="copy" type="button">Copy</button>
+          <button id="dl" type="button">Download</button>
+          <a id="reddit" class="btn" target="_blank" rel="noopener noreferrer">Reddit &#8599;</a>
+          <button id="refresh" type="button" title="Fetch this thread from Reddit again">Refresh</button>
+        </div>
+      </div>
+      <textarea id="md" readonly></textarea>
+      <div id="rendered"></div>
+    </section>
+
+    <section class="view" id="settings">
+      <div class="card">
+        <h2>Saved threads and display</h2>
+        <div class="field">
+          <label for="retDays">Auto-delete after</label>
+          <div class="row">
+            <input type="number" id="retDays" min="0" max="3650" step="1" inputmode="numeric">
+            <span class="hint">days since last fetched. 0 keeps threads forever.</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="tzSel">Time zone</label>
+          <div class="row">
+            <select id="tzSel"></select>
+            <button type="button" id="tzBrowser">Use this device's zone</button>
+          </div>
+        </div>
+        <div class="row">
+          <button type="button" class="primary" id="saveSettings">Save settings</button>
+          <span id="setmsg"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Reddit session</h2>
+        <div id="sess" class="muted">Checking...</div>
+        <form id="ckform" class="row ck" style="margin-top:12px">
+          <input type="password" id="ck" placeholder="Paste reddit_session cookie value" autocomplete="off">
+          <button type="submit" class="primary">Save</button>
+        </form>
+        <div class="row" style="margin-top:10px">
+          <button id="check" type="button">Check now</button>
+          <button id="upbtn" type="button">Upload cookie file</button>
+          <button id="rm" type="button">Remove session</button>
+          <input type="file" id="upfile" accept=".json,.txt,application/json,text/plain" hidden>
+        </div>
+        <details class="help" id="help">
+          <summary>How to get your Reddit cookie</summary>
+          <ol>
+            <li>Open <code>reddit.com</code> on a computer and make sure you are logged in.</li>
+            <li>Press <kbd>F12</kbd> (Mac: <kbd>Cmd</kbd>+<kbd>Option</kbd>+<kbd>I</kbd>) to open DevTools.</li>
+            <li>Chrome / Edge: open the <b>Application</b> tab, then <b>Cookies</b> &gt; <code>https://www.reddit.com</code>.<br>
+                Firefox: open the <b>Storage</b> tab, then <b>Cookies</b> &gt; <code>https://www.reddit.com</code>.</li>
+            <li>Type <code>reddit_session</code> in the <b>Filter</b> box. The list is alphabetical, so it is near the bottom otherwise.</li>
+            <li>Click the row and copy the full value from the preview pane below the table. It is a long string, often starting with <code>eyJ</code>.</li>
+            <li>Paste it in the field above and click <b>Save</b>. The login is checked automatically.</li>
+          </ol>
+          <p><b>If you cannot find it:</b> open the <b>Network</b> tab, reload the page, click the first request, and under <b>Request Headers</b> find <b>Cookie</b>. Copy the text between <code>reddit_session=</code> and the next <code>;</code>.</p>
+          <p><b>Alternative:</b> export cookies with an extension such as Get cookies.txt LOCALLY, use <b>Upload cookie file</b>, then delete the exported file.</p>
+          <p>Treat the value like a password and do not save it anywhere else. Sessions last weeks to months; when the header shows you are logged out, repeat these steps.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const SORT_NAMES = {confidence: "Best", top: "Top", new: "New", old: "Old", controversial: "Controversial", qa: "Q&A"};
+const mobile = () => window.matchMedia("(max-width: 860px)").matches;
 let current = null;      // meta of the thread on screen
 let threads = [];        // saved thread list
+let tz;                  // display time zone from server settings
 let view = "rendered";
-let tz = undefined;      // display time zone from server settings
 try { view = localStorage.getItem("r2m-view") || "rendered"; } catch {}
 
 function fmtDate(ts) {
@@ -226,11 +321,58 @@ function fmtDate(ts) {
   } catch { return d.toLocaleString(); }
 }
 function setStatus(msg, cls = "") { $("status").textContent = msg; $("status").className = cls; }
+let toastTimer;
+function toast(msg, isErr) {
+  const t = $("toast");
+  t.textContent = msg; t.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 5000 : 2500);
+}
+const plural = (n, w) => `${n} ${w}${n == 1 ? "" : "s"}`;
+
+// ------------------------------------------------------------ routing: "" home, #t=<id> thread, #settings
+function showView(name) {
+  for (const v of ["home", "reader", "settings"]) $(v).classList.toggle("on", v === name);
+  $("convert").hidden = name === "settings";
+  $("gear").classList.toggle("on", name === "settings");
+  document.body.classList.toggle("reading", name === "reader");
+  closeDrawer();
+}
+
+async function route(force) {
+  const h = location.hash;
+  if (h === "#settings") { showView("settings"); loadSettings(); refreshSession(true); return; }
+  const m = h.match(/^#t=([a-z0-9]+)$/i);
+  if (m) {
+    const id = m[1].toLowerCase();
+    showView("reader");
+    if (force || !current || current.id !== id) await openThread(id);
+    return;
+  }
+  current = null;
+  renderList();
+  showView("home");
+}
+function go(hash) {
+  if (location.hash === hash) route(true); else location.hash = hash;
+}
+window.addEventListener("hashchange", () => route());
+
+// ------------------------------------------------------------ drawer (mobile)
+function closeDrawer() { document.body.classList.remove("drawer"); }
+$("menuBtn").addEventListener("click", () => document.body.classList.toggle("drawer"));
+$("backdrop").addEventListener("click", closeDrawer);
+$("newBtn").addEventListener("click", () => {
+  if (location.hash) history.pushState(null, "", location.pathname);
+  route();
+  $("url").value = ""; setStatus("");
+  $("url").focus();
+});
 
 // ------------------------------------------------------------ view toggle
 function setView(v) {
   view = v;
-  $("out").classList.toggle("view-rendered", v === "rendered");
+  $("reader").classList.toggle("view-rendered", v === "rendered");
   $("vRendered").classList.toggle("on", v === "rendered");
   $("vRaw").classList.toggle("on", v === "raw");
   $("vRendered").setAttribute("aria-pressed", v === "rendered");
@@ -242,21 +384,19 @@ $("vRendered").addEventListener("click", () => setView("rendered"));
 $("vRaw").addEventListener("click", () => setView("raw"));
 
 // ------------------------------------------------------------ open a saved thread
-async function openThread(id, note) {
+async function openThread(id) {
   const r = await fetch(`/api/threads/${encodeURIComponent(id)}?scores=${$("scores").checked ? 1 : 0}`);
   const j = await r.json();
-  if (!r.ok) { setStatus(j.error || "Could not load thread", "err"); return; }
+  if (!r.ok) { setStatus(j.error || "Could not load thread", "err"); current = null; showView("home"); renderList(); return; }
   current = j.meta;
   $("md").value = j.markdown;
   $("rendered").innerHTML = j.html;
-  $("rendered").scrollTop = 0;
+  $("rendered").scrollTop = 0; $("md").scrollTop = 0;
   const exp = current.expected != null ? ` of ${current.expected}` : "";
   $("meta").textContent = `Saved ${fmtDate(current.saved_at)} · ${current.count}${exp} comments · ${SORT_NAMES[current.sort] || "Best"}`;
   $("reddit").href = current.permalink;
-  $("out").classList.add("show");
-  if (location.hash !== `#t=${id}`) history.replaceState(null, "", `#t=${id}`);
+  document.title = `${current.title} · reddit2md`;
   renderList();
-  if (note) setStatus(note, "ok");
 }
 
 // ------------------------------------------------------------ convert / refresh
@@ -283,15 +423,23 @@ async function convert(url, refresh) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     if (j.cached) {
-      await openThread(j.id);
-      setStatus(`Loaded saved copy from ${fmtDate(current.saved_at)}. Click Refresh to fetch it again.`, "ok");
+      go(`#t=${j.id}`);
+      const t = threads.find(x => x.id === j.id);
+      setStatus(`Loaded saved copy${t ? " from " + fmtDate(t.saved_at) : ""}. Click Refresh to fetch it again.`, "ok");
+      toast("Loaded saved copy. Use Refresh to fetch it again.");
+      $("url").value = "";
       return;
     }
     const done = await poll(j.job);
     await loadList();
-    await openThread(done.id, `Done in ${done.elapsed}s. Saved.`);
+    go(`#t=${done.id}`);
+    setStatus(`Done in ${done.elapsed}s. Saved.`, "ok");
+    toast(`Converted and saved in ${done.elapsed}s`);
+    $("url").value = "";
+    refreshSession(true);
   } catch (err) {
     setStatus(err.message, "err");
+    toast(err.message, true);
   } finally {
     $("go").disabled = $("refresh").disabled = false;
   }
@@ -318,24 +466,17 @@ async function copyRendered() {
   document.execCommand("copy");
   sel.removeAllRanges();
 }
-
 async function copyRaw() {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    await navigator.clipboard.writeText($("md").value);
-    return;
-  }
-  $("md").select(); document.execCommand("copy");
-  window.getSelection().removeAllRanges();
+  if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText($("md").value); return; }
+  $("md").select(); document.execCommand("copy"); window.getSelection().removeAllRanges();
 }
-
 $("copy").addEventListener("click", async () => {
   const which = view;
   try {
     if (which === "rendered") await copyRendered(); else await copyRaw();
-    setStatus(which === "rendered" ? "Copied formatted text" : "Copied raw Markdown", "ok");
-  } catch (err) { setStatus("Copy failed: " + err.message, "err"); }
+    toast(which === "rendered" ? "Copied formatted text" : "Copied raw Markdown");
+  } catch (err) { toast("Copy failed: " + err.message, true); }
 });
-
 $("dl").addEventListener("click", () => {
   const name = (current?.title || "thread").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 80) || "thread";
   const a = document.createElement("a");
@@ -345,14 +486,13 @@ $("dl").addEventListener("click", () => {
   URL.revokeObjectURL(a.href);
 });
 
-// ------------------------------------------------------------ saved threads list
+// ------------------------------------------------------------ sidebar list
 async function loadList() {
   try {
     const j = await (await fetch("/api/threads")).json();
     threads = j.threads || [];
     tz = j.timezone || undefined;
-    $("retention").textContent = j.retention_days > 0
-      ? `Auto-delete after ${j.retention_days} day${j.retention_days == 1 ? "" : "s"}` : "Kept forever";
+    $("retention").textContent = j.retention_days > 0 ? `Auto-delete after ${plural(j.retention_days, "day")}` : "Saved threads are kept forever";
   } catch { threads = []; }
   renderList();
 }
@@ -360,73 +500,105 @@ async function loadList() {
 function renderList() {
   const q = $("filter").value.trim().toLowerCase();
   const shown = threads.filter(t => !q || (t.title || "").toLowerCase().includes(q) || (t.subreddit || "").toLowerCase().includes(q));
-  $("libcount").textContent = threads.length ? `(${threads.length})` : "";
   const list = $("list");
   list.replaceChildren();
   if (!shown.length) {
     const d = document.createElement("div");
     d.className = "empty";
-    d.textContent = threads.length ? "No matches." : "Nothing saved yet. Converted threads appear here.";
+    d.textContent = threads.length ? "No matches." : "No saved threads yet. Converted threads appear here.";
     list.append(d);
     return;
   }
   for (const t of shown) {
     const item = document.createElement("div");
     item.className = "item" + (current && current.id === t.id ? " active" : "");
+    item.addEventListener("click", () => { go(`#t=${t.id}`); closeDrawer(); });
 
     const info = document.createElement("div");
     info.className = "info";
-    const title = document.createElement("a");
-    title.className = "t"; title.href = `#t=${t.id}`; title.textContent = t.title || t.id; title.title = t.title || "";
+    const title = document.createElement("div");
+    title.className = "t"; title.textContent = t.title || t.id; title.title = t.title || "";
     const m = document.createElement("div");
     m.className = "m";
-    m.textContent = `r/${t.subreddit} · saved ${fmtDate(t.saved_at)} · ${t.count} comments`;
+    m.textContent = `r/${t.subreddit} · ${fmtDate(t.saved_at)} · ${t.count} comments`;
     info.append(title, m);
 
+    const acts = document.createElement("div");
+    acts.className = "acts";
     const rd = document.createElement("a");
-    rd.className = "rd"; rd.href = t.permalink; rd.target = "_blank"; rd.rel = "noopener noreferrer";
-    rd.textContent = "Reddit ↗";
-
+    rd.href = t.permalink; rd.target = "_blank"; rd.rel = "noopener noreferrer";
+    rd.textContent = "↗"; rd.title = "Open on Reddit"; rd.setAttribute("aria-label", "Open on Reddit");
+    rd.addEventListener("click", (e) => e.stopPropagation());
     const del = document.createElement("button");
-    del.type = "button"; del.textContent = "Delete"; del.title = "Delete saved copy";
-    del.addEventListener("click", async () => {
+    del.type = "button"; del.textContent = "✕"; del.title = "Delete saved copy"; del.setAttribute("aria-label", "Delete");
+    del.addEventListener("click", async (e) => {
+      e.stopPropagation();
       if (!confirm(`Delete the saved copy of "${t.title}"?`)) return;
       await fetch(`/api/threads/${encodeURIComponent(t.id)}`, {method: "DELETE"});
-      if (current && current.id === t.id) {
-        current = null; $("out").classList.remove("show"); history.replaceState(null, "", location.pathname);
-      }
-      loadList();
+      await loadList();
+      if (current && current.id === t.id) { current = null; history.replaceState(null, "", location.pathname); route(); }
     });
+    acts.append(rd, del);
 
-    item.append(info, rd, del);
+    item.append(info, acts);
     list.append(item);
   }
 }
-
 $("filter").addEventListener("input", renderList);
 
-function openFromHash() {
-  const m = location.hash.match(/^#t=([a-z0-9]+)$/i);
-  if (m && (!current || current.id !== m[1].toLowerCase())) openThread(m[1].toLowerCase());
+// ------------------------------------------------------------ session pill + settings
+function showSession(j) {
+  const pill = $("pill"), txt = pill.querySelector(".txt");
+  pill.classList.remove("good", "bad");
+  let line, notice = "";
+  if (j.error) { txt.textContent = "Session ?"; line = "Could not check: " + j.error; }
+  else if (!j.state_file) {
+    pill.classList.add("bad"); txt.textContent = "No session";
+    line = "No Reddit session saved. Conversions run logged out and are more likely to be blocked.";
+    notice = 'No Reddit session saved. Conversions may be blocked. <a href="#settings">Add your cookie</a>.';
+  } else if (j.logged_in === true) {
+    pill.classList.add("good"); txt.textContent = `u/${j.user}`;
+    line = `Logged in as u/${j.user}` + (j.json_ok === false ? " · JSON endpoints blocked (browser-click mode will be used)" : "");
+  } else if (j.logged_in === false) {
+    pill.classList.add("bad"); txt.textContent = "Logged out";
+    line = "Session saved but Reddit sees you as logged out. The cookie has probably expired; paste a new one.";
+    notice = 'Your Reddit session has expired. <a href="#settings">Update your cookie</a>.';
+  } else { txt.textContent = "Unchecked"; line = "Session saved but not checked yet."; }
+  if (j.checked_at) line += ` (checked ${fmtDate(j.checked_at)})`;
+  $("sess").textContent = line;
+  $("sess").className = pill.classList.contains("bad") ? "err" : pill.classList.contains("good") ? "ok" : "muted";
+  $("homeNotice").hidden = !notice;
+  $("homeNotice").innerHTML = notice;
+  $("help").open = !pill.classList.contains("good");
+  pill.title = line;
 }
-window.addEventListener("hashchange", openFromHash);
 
-// ------------------------------------------------------------ Reddit session
+async function refreshSession(cached) {
+  try {
+    const j = await (await fetch("/api/session" + (cached ? "?cached=1" : ""))).json();
+    showSession(j);
+  } catch (err) { showSession({error: err.message}); }
+}
+
+$("check").addEventListener("click", async () => {
+  $("check").disabled = true; $("sess").textContent = "Checking with Reddit..."; $("sess").className = "muted";
+  await refreshSession(false);
+  $("check").disabled = false;
+});
+
 $("upbtn").addEventListener("click", () => $("upfile").click());
-
 $("upfile").addEventListener("change", async () => {
   const file = $("upfile").files[0];
   if (!file) return;
-  $("sess").textContent = "Uploading...";
+  $("sess").textContent = "Uploading..."; $("sess").className = "muted";
   const fd = new FormData();
   fd.append("file", file);
   try {
     const r = await fetch("/api/session/upload", {method: "POST", body: fd});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    $("sess").textContent = `Saved ${j.cookies} Reddit cookies. Checking login...`;
     $("check").click();
-  } catch (err) { $("sess").textContent = err.message; }
+  } catch (err) { $("sess").textContent = err.message; $("sess").className = "err"; }
   $("upfile").value = "";
 });
 
@@ -434,55 +606,39 @@ $("ckform").addEventListener("submit", async (e) => {
   e.preventDefault();
   const v = $("ck").value.trim();
   if (!v) return;
-  $("sess").textContent = "Saving...";
+  $("sess").textContent = "Saving..."; $("sess").className = "muted";
   try {
     const r = await fetch("/api/session/cookie", {method: "POST", headers: {"Content-Type": "application/json"},
                                                   body: JSON.stringify({reddit_session: v})});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     $("ck").value = "";
-    $("sess").textContent = "Saved. Checking login...";
     $("check").click();
-  } catch (err) { $("sess").textContent = err.message; }
+  } catch (err) { $("sess").textContent = err.message; $("sess").className = "err"; }
 });
 
 $("rm").addEventListener("click", async () => {
   if (!confirm("Remove the saved Reddit session?")) return;
   await fetch("/api/session", {method: "DELETE"});
-  $("sess").textContent = "Session removed. Running logged out.";
+  refreshSession(true);
 });
 
-$("check").addEventListener("click", async () => {
-  $("check").disabled = true;
-  $("sess").textContent = "Checking...";
-  try {
-    const j = await (await fetch("/api/session")).json();
-    if (j.error) throw new Error(j.error);
-    if (!j.state_file) $("sess").textContent = "No session file found. Running logged out.";
-    else $("sess").textContent = (j.logged_in ? `Logged in as ${j.user}` : "Session file present but NOT logged in (expired?)")
-      + ` · JSON endpoints ${j.json_ok ? "OK" : "blocked (DOM mode will be used)"}`;
-  } catch (err) { $("sess").textContent = err.message; }
-  $("check").disabled = false;
-});
-
-// ------------------------------------------------------------ settings
-let settingsLoaded = false;
+let tzLoaded = false;
 async function loadSettings() {
   const j = await (await fetch("/api/settings")).json();
-  const sel = $("tzSel");
-  if (!settingsLoaded) {
-    sel.replaceChildren(...j.timezones.map(z => { const o = document.createElement("option"); o.value = o.textContent = z; return o; }));
-    settingsLoaded = true;
+  if (!tzLoaded) {
+    $("tzSel").replaceChildren(...j.timezones.map(z => { const o = document.createElement("option"); o.value = o.textContent = z; return o; }));
+    tzLoaded = true;
   }
-  sel.value = j.settings.timezone;
+  $("tzSel").value = j.settings.timezone;
   $("retDays").value = j.settings.retention_days;
+  $("setmsg").textContent = "";
 }
-$("settingsBox").addEventListener("toggle", () => { if ($("settingsBox").open) loadSettings(); });
 
 $("tzBrowser").addEventListener("click", () => {
   const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
   if ([...$("tzSel").options].some(o => o.value === z)) $("tzSel").value = z;
-  else { $("setmsg").textContent = `Browser zone ${z} is not in the list.`; $("setmsg").className = "err"; }
+  else { $("setmsg").textContent = `This device's zone (${z}) is not in the list.`; $("setmsg").className = "err"; }
 });
 
 $("saveSettings").addEventListener("click", async () => {
@@ -492,24 +648,23 @@ $("saveSettings").addEventListener("click", async () => {
   if (days > 0) {
     const cutoff = Date.now() / 1000 - days * 86400;
     const doomed = threads.filter(t => (t.saved_at || 0) < cutoff).length;
-    if (doomed && !confirm(`${doomed} saved thread${doomed == 1 ? "" : "s"} older than ${days} day${days == 1 ? "" : "s"} will be deleted now. Continue?`)) return;
+    if (doomed && !confirm(`${plural(doomed, "saved thread")} older than ${plural(days, "day")} will be deleted now. Continue?`)) return;
   }
   try {
     const r = await fetch("/api/settings", {method: "PUT", headers: {"Content-Type": "application/json"},
                                            body: JSON.stringify({retention_days: days, timezone: $("tzSel").value})});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    msg.textContent = "Saved." + (j.deleted ? ` Deleted ${j.deleted} old thread${j.deleted == 1 ? "" : "s"}.` : "");
+    msg.textContent = "Saved." + (j.deleted ? ` Deleted ${plural(j.deleted, "old thread")}.` : "");
     msg.className = "ok";
     await loadList();
-    if (current) {
-      if (threads.some(t => t.id === current.id)) await openThread(current.id);
-      else { current = null; $("out").classList.remove("show"); history.replaceState(null, "", location.pathname); }
-    }
+    current = null;  // re-render the open thread with the new time zone when it is shown again
   } catch (err) { msg.textContent = err.message; msg.className = "err"; }
 });
 
-loadList().then(openFromHash);
+// ------------------------------------------------------------ start
+loadList().then(() => route());
+refreshSession(true);
 </script>
 </body>
 </html>

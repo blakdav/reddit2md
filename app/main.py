@@ -25,6 +25,28 @@ browser_lock = threading.Lock()  # one Chromium at a time
 
 storage.start_purger(lambda: settings.load()["retention_days"])
 
+# Last known Reddit login state, so the header pill never has to launch a browser on page load.
+SESSION_FILE = os.path.join(os.path.dirname(STATE_FILE), "session_status.json")
+SESSION_MAX_AGE = 6 * 3600
+
+
+def _session_cache(update=None):
+    try:
+        with open(SESSION_FILE, encoding="utf-8") as f:
+            cache = json.load(f)
+    except (FileNotFoundError, ValueError):
+        cache = {}
+    if update is not None:
+        cache = {**cache, "checked_at": time.time(), **update}
+        try:
+            with open(SESSION_FILE + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+            os.replace(SESSION_FILE + ".tmp", SESSION_FILE)
+        except OSError as e:
+            log.warning("Could not write session status: %s", e)
+    cache["state_file"] = os.path.exists(STATE_FILE)
+    return cache
+
 
 def _cleanup_jobs():
     cutoff = time.time() - JOB_TTL
@@ -52,6 +74,10 @@ def _run(jid, url, sort, mode):
             result = scrape(url, sort=sort, mode=mode, progress=progress)
         has_id = POST_ID_RE.search(url) or SHORT_RE.search(url)
         storage.save(result, source_url=None if has_id else url)
+        update = {"logged_in": bool(result.get("user")), "user": result.get("user")}
+        if result["mode"] == "json":
+            update["json_ok"] = True
+        _session_cache(update)
         job["id"] = result["id"]
         job["status"] = "done"
         progress("Done")
@@ -149,9 +175,17 @@ def settings_put():
 
 @app.get("/api/session")
 def session():
+    """?cached=1 returns the last known state (checking only if none or stale); otherwise checks Reddit now."""
+    if not os.path.exists(STATE_FILE):
+        return jsonify(_session_cache({"logged_in": False, "user": None, "json_ok": None}))
+    cache = _session_cache()
+    fresh = cache.get("checked_at") and time.time() - cache["checked_at"] < SESSION_MAX_AGE
+    if request.args.get("cached") and fresh and "logged_in" in cache:
+        return jsonify(cache)
     try:
         with browser_lock:
-            return jsonify(session_status())
+            info = session_status()
+        return jsonify(_session_cache(info))
     except Exception as e:
         return jsonify(error=str(e)), 500
 
@@ -164,6 +198,7 @@ def _write_state(state):
             json.dump(state, out)
         os.replace(tmp, STATE_FILE)
     log.info("Session file replaced (%d reddit cookies)", len(state["cookies"]))
+    _session_cache({"logged_in": None, "user": None, "json_ok": None, "checked_at": 0})
 
 
 @app.post("/api/session/upload")
