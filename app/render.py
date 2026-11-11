@@ -12,6 +12,7 @@ _md = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": 
 # Badge markers use Unicode private-use characters, stripped from comment text first, so comment text can never fake one.
 B0, B1 = "", ""
 BADGES = {
+    "op": "OP",
     "new": "new",
     "edited": "edited",
     "deleted": "deleted on Reddit",
@@ -48,12 +49,29 @@ def _prune_new(nodes, since):
     return out
 
 
+# Re-sort the saved copy for display. "saved" keeps the order Reddit returned when fetched.
+ORDERS = {
+    "top": (lambda n: n.get("score") if n.get("score") is not None else float("-inf"), True),
+    "new": (lambda n: n.get("created") or 0, True),
+    "old": (lambda n: n.get("created") or float("inf"), False),
+}
+
+
+def _sorted(nodes, order):
+    key, rev = ORDERS[order]
+    return [{**n, "replies": _sorted(n["replies"], order)} for n in sorted(nodes, key=key, reverse=rev)]
+
+
 def _count(nodes):
     return sum(1 + _count(n["replies"]) for n in nodes)
 
 
 def _comment(node, depth, o, out):
-    meta = f"**u/{node.get('author') or '[deleted]'}**"
+    author = node.get("author") or "[deleted]"
+    is_op = o["op"] and author == o["op"]
+    meta = f"**u/{author}**"
+    if is_op:
+        meta += f" {B0}op{B1}" if o["web"] else " (OP)"
     if o["scores"] and node.get("score") is not None:
         meta += f" · {node['score']} pts"
     if node.get("created"):
@@ -70,13 +88,17 @@ def _comment(node, depth, o, out):
         _comment(r, depth + 1, o, out)
 
 
-def render(data, scores=True, tz="UTC", web=False, new_only=False):
+def render(data, scores=True, tz="UTC", web=False, new_only=False, order="saved"):
     """data: saved thread dict (post, comments, count, prev_fetch)."""
-    o = {"scores": scores, "tz": ZoneInfo(tz or "UTC"), "web": web, "since": data.get("prev_fetch")}
+    o = {"scores": scores, "tz": ZoneInfo(tz or "UTC"), "web": web, "since": data.get("prev_fetch"),
+         # Authors that can't identify OP: deleted accounts all share the same placeholder name.
+         "op": data["post"].get("author") if data["post"].get("author") not in (None, "", "[deleted]") else None}
     post = data["post"]
     comments = data["comments"]
     if new_only:
         comments = _prune_new(comments, o["since"])
+    if order in ORDERS:
+        comments = _sorted(comments, order)
 
     lines = [f"# {post['title']}", ""]
     meta = [f"r/{post['subreddit']}", f"u/{post['author']}"]

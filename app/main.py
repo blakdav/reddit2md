@@ -153,9 +153,10 @@ def thread_get(tid):
         return jsonify(error="Not found (it may have been auto-deleted)"), 404
     scores = request.args.get("scores", "1") != "0"
     new_only = request.args.get("new") == "1"
+    order = request.args.get("order", "saved")
     tz = settings.load()["timezone"]
-    md = render(data, scores=scores, tz=tz, new_only=new_only)
-    web = render(data, scores=scores, tz=tz, web=True, new_only=new_only)
+    md = render(data, scores=scores, tz=tz, new_only=new_only, order=order)
+    web = render(data, scores=scores, tz=tz, web=True, new_only=new_only, order=order)
     meta = {k: data.get(k) for k in storage.META_KEYS}
     meta["new_count"] = count_new(data)
     return jsonify(meta=meta, markdown=md, html=to_html(web))

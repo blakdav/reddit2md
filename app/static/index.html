@@ -113,6 +113,7 @@
   #rendered table { border-collapse: collapse; display: block; overflow-x: auto; }
   .badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
            padding: 1px 7px; border-radius: 999px; margin-left: 4px; vertical-align: 1px; line-height: 1.6; }
+  .b-op { background: #0079d3; color: #fff; margin-left: 2px; }
   .b-new { background: var(--accent); color: #111; }
   .b-edited { background: #2c3440; color: #b8c4d2; }
   .b-deleted, .b-removed, .b-gone { background: #3a2222; color: #f3b3b3; }
@@ -243,6 +244,12 @@
           </span>
           <button id="copy" type="button">Copy</button>
           <button id="dl" type="button">Download</button>
+          <select id="order" title="Re-sort the saved comments (also applies to Copy and Download)">
+            <option value="saved">As saved</option>
+            <option value="top">Top</option>
+            <option value="new">New</option>
+            <option value="old">Old</option>
+          </select>
           <a id="reddit" class="btn" target="_blank" rel="noopener noreferrer">Reddit &#8599;</a>
           <button id="newOnly" type="button" title="Show only comments added in the last update">New only</button>
           <button id="refresh" type="button" title="Fetch new comments and merge them into the saved copy">Update</button>
@@ -394,7 +401,7 @@ $("vRaw").addEventListener("click", () => setView("raw"));
 // ------------------------------------------------------------ open a saved thread
 async function openThread(id) {
   if (!current || current.id !== id) newOnly = false;
-  const r = await fetch(`/api/threads/${encodeURIComponent(id)}?scores=${$("scores").checked ? 1 : 0}&new=${newOnly ? 1 : 0}`);
+  const r = await fetch(`/api/threads/${encodeURIComponent(id)}?scores=${$("scores").checked ? 1 : 0}&new=${newOnly ? 1 : 0}&order=${$("order").value}`);
   const j = await r.json();
   if (!r.ok) { setStatus(j.error || "Could not load thread", "err"); current = null; showView("home"); renderList(); return; }
   current = j.meta;
@@ -473,6 +480,12 @@ async function convert(url, refresh) {
 $("form").addEventListener("submit", (e) => { e.preventDefault(); convert($("url").value.trim(), false); });
 $("refresh").addEventListener("click", () => current && convert(current.permalink, true));
 $("scores").addEventListener("change", () => current && openThread(current.id));
+// View order is a per-device preference; storage may be unavailable, so it's best effort.
+try { const o = localStorage.getItem("r2m-order"); if (o && $("order").querySelector(`option[value="${o}"]`)) $("order").value = o; } catch (e) {}
+$("order").addEventListener("change", () => {
+  try { localStorage.setItem("r2m-order", $("order").value); } catch (e) {}
+  if (current) openThread(current.id);
+});
 $("newOnly").addEventListener("click", () => { if (!current) return; newOnly = !newOnly; openThread(current.id); });
 
 // ------------------------------------------------------------ copy / download
