@@ -25,7 +25,28 @@ Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/
 
 Badges appear only in the web view. Copy and Download give clean Markdown (the kept text is included, without labels). An update fetches the whole thread, so it costs the same number of Reddit requests as the first conversion. The sidebar lists saved threads with title, subreddit, save date, comment count and a link back to Reddit. On phones the sidebar opens from the menu button. Each thread also has its own address (`http://<server>:8095/#t=<id>`) you can bookmark.
 
+**View order** (in the reader toolbar) re-sorts the saved copy by Top, New or Old at every reply level, without re-fetching. *As saved* keeps the order the thread was fetched in. Copy and Download use the order you're viewing. Comments by the thread's author get an **OP** badge (and `(OP)` in the Markdown).
+
 Saved threads are deleted automatically once they are older than the auto-delete setting (default 30 days, based on when they were last fetched), checked hourly.
+
+## Browser extension (Brave / Chrome)
+
+The `extension/` folder has a small extension that saves threads without copy-pasting:
+
+- **Toolbar button** (or **Alt+Shift+R**): sends the thread in the current tab.
+- **Right-click a link → Send link to reddit2md**: save a thread straight from a subreddit listing without opening it.
+- Sending a thread that's already saved **updates** it (new comments are merged in and marked **new**).
+- The icon shows the state of the thread **in the current tab**: **✓** saved, **↓** converting,
+  **!** the last attempt failed, nothing if it isn't saved. Hover the icon for details.
+- Desktop notifications when you send a thread and when it's saved or fails. Click the "saved" notification to open the thread in reddit2md.
+
+Install:
+
+1. Open `brave://extensions` (or `chrome://extensions`) and turn on **Developer mode**.
+2. Click **Load unpacked** and pick the `extension/` folder.
+3. The options page opens: enter the address you use for reddit2md (e.g. `https://reddit2md.example.lan`), click **Save & test**, and allow access when asked. Brave asks for that site and Reddit; Reddit access lets the icon check the thread in the current tab, and the extension can't see any other sites.
+
+To update it after a `git pull`, click the reload icon on the extension's card.
 
 ## Settings (web UI)
 

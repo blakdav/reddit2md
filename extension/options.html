@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Send to reddit2md</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; margin: 16px; min-width: 380px; color: #222; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; }
+    .row { display: flex; gap: 8px; }
+    input { flex: 1; padding: 6px 8px; font: inherit; }
+    button { padding: 6px 14px; font: inherit; cursor: pointer; }
+    .hint { color: #666; font-size: 12px; margin-top: 6px; }
+    #result { margin-top: 12px; min-height: 18px; }
+    .ok { color: #1a8a32; }
+    .err { color: #c62828; }
+  </style>
+</head>
+<body>
+  <label for="server">reddit2md address</label>
+  <div class="row">
+    <input id="server" type="text" placeholder="https://reddit2md.example.lan" />
+    <button id="save">Save &amp; test</button>
+  </div>
+  <div class="hint">The URL you open reddit2md at. Brave will ask to allow that site and Reddit:
+    Reddit so the icon can show whether the thread you're reading is already saved.</div>
+  <div id="result"></div>
+  <script src="options.js"></script>
+</body>
+</html>

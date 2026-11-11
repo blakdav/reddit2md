@@ -92,6 +92,8 @@ def _run(jid, url, sort, mode):
             update["json_ok"] = True
         _session_cache(update)
         job["id"] = result["id"]
+        job["title"] = result["post"].get("title")
+        job["count"] = result["count"]
         job["status"] = "done"
         progress("Done")
     except ScrapeError as e:
@@ -120,7 +122,7 @@ def convert():
     sort = body.get("sort") if body.get("sort") in SORTS else "confidence"
     mode = body.get("mode") if body.get("mode") in ("auto", "json", "dom") else "auto"
     jid = uuid.uuid4().hex
-    JOBS[jid] = {"status": "running", "progress": "Queued", "started": time.time()}
+    JOBS[jid] = {"status": "running", "progress": "Queued", "started": time.time(), "url": url}
     threading.Thread(target=_run, args=(jid, url, sort, mode), daemon=True).start()
     return jsonify(job=jid)
 
@@ -136,6 +138,29 @@ def job(jid):
 
 
 # ---------------------------------------------------------------- saved threads
+
+def _same_thread(a, b):
+    ma, mb = POST_ID_RE.search(a or ""), POST_ID_RE.search(b or "")
+    return a == b or bool(ma and mb and ma.group(1).lower() == mb.group(1).lower())
+
+
+@app.get("/api/lookup")
+def lookup():
+    """State of one Reddit URL, for the browser extension's icon: saved, converting, failed, or none."""
+    url = (request.args.get("url") or "").strip()
+    jobs = sorted((j for j in JOBS.values() if _same_thread(j.get("url"), url)), key=lambda j: j["started"])
+    last = jobs[-1] if jobs else None
+    if last and last["status"] == "running":
+        return jsonify(state="running", progress=last["progress"])
+    tid = _cached_id(url) if url else None
+    if tid:
+        data = storage.get(tid)
+        return jsonify(state="saved", id=tid, title=data["post"].get("title"), count=data.get("count"),
+                       saved_at=data.get("saved_at"))
+    if last and last["status"] == "error":
+        return jsonify(state="error", error=last["error"])
+    return jsonify(state="none")
+
 
 @app.get("/api/threads")
 def threads_list():
