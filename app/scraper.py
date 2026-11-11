@@ -287,6 +287,68 @@ MODHASH_JS = """() => (window.r && r.config && r.config.modhash)
     || (document.querySelector('input[name=uh]') || {}).value || ''"""
 MORE_BATCH = 100  # comment ids per morechildren request (Reddit's maximum)
 
+# The POSTed morechildren answers in old.reddit's "api" style: each thing's data is
+# {id: "t1_x", parent: "t1_y", content: <escaped HTML of the rendered comment>}, not the usual
+# JSON fields. Parse that HTML in the page (it has a DOM) into the usual shape.
+API_THINGS_JS = """
+(things) => things.map(t => {
+  const d = t.data || {};
+  const ta = document.createElement('textarea');
+  ta.innerHTML = d.content || '';
+  const doc = new DOMParser().parseFromString(ta.value, 'text/html');
+  const id = (d.id || '').replace(/^t[0-9]_/, '');
+  const parent_id = d.parent || d.parent_id || '';
+  const thing = doc.querySelector('.thing');
+  if (t.kind === 'more' || (thing && thing.classList.contains('morechildren'))) {
+    const a = doc.querySelector('.morecomments a');
+    const args = a ? [...(a.getAttribute('onclick') || '').matchAll(/'([^']*)'/g)].map(m => m[1]) : [];
+    const ids = args.find((x, i) => i >= 2 && /^[a-z0-9]+(,[a-z0-9]+)*$/.test(x)) || '';
+    return {kind: 'more', id, parent_id, children: ids ? ids.split(',') : []};
+  }
+  if (!thing || !thing.classList.contains('comment')) return {kind: t.kind, id, parent_id, unknown: true};
+  const entry = thing.querySelector(':scope > .entry') || thing.querySelector('.entry');
+  const md = entry && entry.querySelector('.usertext-body .md');
+  const score = entry && entry.querySelector('.score.unvoted');
+  const time = entry && entry.querySelector('time');
+  return {kind: 't1', id, parent_id,
+          author: thing.getAttribute('data-author') || '[deleted]',
+          score: score ? parseInt(score.getAttribute('title')) : null,
+          created: time ? Date.parse(time.getAttribute('datetime')) / 1000 : null,
+          html: md ? md.innerHTML : null,
+          removed: !md && !!entry && entry.innerText.includes('[removed]')};
+})
+"""
+
+
+def _normalize_things(page, things):
+    """morechildren things as (kind, data) in the usual JSON shape, whichever style Reddit answered in."""
+    if not things:
+        return []
+    if all("body" in t.get("data", {}) or t.get("kind") == "more" and "children" in t.get("data", {})
+           for t in things):
+        return [(t.get("kind"), t.get("data", {})) for t in things]
+    if not any("content" in t.get("data", {}) for t in things):
+        raise Blocked("Unrecognized morechildren response")
+    parsed = page.evaluate(API_THINGS_JS, things)
+    comments = [p for p in parsed if p["kind"] == "t1" and not p.get("unknown")]
+    if comments and sum(p["html"] is None and not p["removed"] for p in comments) > len(comments) / 2:
+        # Most comments with no readable text: the HTML isn't what we expect. Don't save blanks.
+        raise Blocked("Couldn't read comment text in morechildren response")
+    out = []
+    for p in parsed:
+        if p.get("unknown"):
+            raise Blocked("Unrecognized comment in morechildren response")
+        if p["kind"] == "more":
+            out.append(("more", {"id": p["id"], "parent_id": p["parent_id"], "children": p["children"]}))
+            continue
+        if p["html"] is not None:
+            body = html_to_md(p["html"]).strip()
+        else:
+            body = "[removed]" if p["removed"] else "[deleted]"
+        out.append(("t1", {"id": p["id"], "parent_id": p["parent_id"], "author": p["author"], "score": p["score"],
+                           "created_utc": p["created"], "body": body}))
+    return out
+
 
 def _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending):
     """Expand every "more" stub. Ids from many stubs share one request (up to MORE_BATCH), which
@@ -310,16 +372,15 @@ def _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pendin
             r = _fetch_json(page, "/api/morechildren", counter, modhash=modhash, form={
                 "api_type": "json", "raw_json": "1", "limit_children": "false", "sort": sort,
                 "link_id": f"t3_{post_id}", "children": ",".join(c for c, _ in batch), "uh": modhash})
-            things = r.get("json", {}).get("data", {}).get("things", [])
+            things = _normalize_things(page, r.get("json", {}).get("data", {}).get("things", []))
             orphans = []
-            for t in things:
-                d = t.get("data", {})
+            for kind, d in things:
                 pid = d.get("parent_id", "")
                 target = root if pid.startswith("t3_") else nodes.get(pid[3:])
-                if t.get("kind") == "more":
+                if kind == "more":
                     pending.append((target or fallback.get(pid[3:]) or root, d))
                     continue
-                if t.get("kind") != "t1" or d.get("id") in nodes:
+                if kind != "t1" or d.get("id") in nodes:
                     continue
                 node = new_node(d["id"], d.get("author"), d.get("score"), d.get("created_utc"), d.get("body", ""))
                 nodes[d["id"]] = node

@@ -34,7 +34,7 @@ _BADGE_RE = re.compile(B0 + "([a-z]+)" + B1)
 # Anchor markers: each comment in the web view gets an id (c-<comment id>), so
 # AI answers and search results can link to it. Same private-use trick.
 A0, A1 = "\ue002", "\ue003"
-_ANCHOR_RE = re.compile(A0 + "([a-z0-9]+)" + A1)
+_ANCHOR_RE = re.compile(A0 + "([a-z0-9_]+)" + A1)
 
 
 def _clean(text):

@@ -25,6 +25,7 @@ SORTS = ("confidence", "top", "new", "old", "controversial", "qa")
 browser_lock = threading.Lock()  # one Chromium at a time (the queue worker, or a session check)
 
 storage.start_purger(lambda: settings.load()["retention_days"])
+storage.repair_all()
 
 # Last known Reddit login state, so the header pill never has to launch a browser on page load.
 SESSION_FILE = os.path.join(os.path.dirname(STATE_FILE), "session_status.json")

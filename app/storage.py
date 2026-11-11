@@ -115,9 +115,55 @@ def _kept(nodes):
 def get(tid):
     try:
         with open(_path(tid), encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except (FileNotFoundError, ValueError):
         return None
+    return _repair(data)
+
+
+def _junk(n):
+    """Empty placeholders saved by commit 42c845e, which misread morechildren's "api"-style answer:
+    id "t1_<id>", no author, no text. Their real text was never saved."""
+    return str(n.get("id", "")).startswith("t1_") and not n.get("author") and not (n.get("body") or "").strip()
+
+
+def _drop_junk(nodes):
+    kept, dropped = [], 0
+    for n in nodes:
+        if _junk(n) and not n["replies"]:
+            dropped += 1
+            continue
+        n["replies"], d = _drop_junk(n["replies"])
+        dropped += d
+        kept.append(n)
+    return kept, dropped
+
+
+def _repair(data):
+    """Drop junk placeholders once, flag the thread Partial so an Update refetches those comments."""
+    data["comments"], dropped = _drop_junk(data.get("comments", []))
+    if not dropped:
+        return data
+    data["count"] = merge._count(data["comments"])
+    data["kept_deleted"] = _kept(data["comments"])
+    reason = f"{dropped} comments failed to load in an earlier fetch"
+    data["partial"] = f"{data['partial']}; {reason}" if data.get("partial") else reason
+    with _lock:
+        _write(_path(data["id"]), data)
+        idx = _load_index()
+        idx["threads"][data["id"]] = _meta(data)
+        _write(INDEX, idx)
+    log.info("Thread %s: removed %d empty placeholder comments; flagged Partial", data["id"], dropped)
+    return data
+
+
+def repair_all():
+    """Run the junk-placeholder repair over every saved thread (cheap; once per start)."""
+    for m in list_threads():
+        try:
+            get(m["id"])
+        except Exception as e:
+            log.warning("Repair of %s failed: %s", m.get("id"), e)
 
 
 def lookup_alias(url):
