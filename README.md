@@ -40,7 +40,9 @@ Optional, using the same setup as Vidscribe: a local model through your Ollama s
 
 Answers cite comments as links like `u/name`; clicking one jumps to that comment (in another thread, it opens that thread first). Claude shows the cost of each answer: a summary of a typical thread is a few cents; a 1,000-comment thread is around $0.50 on Opus; a question across threads is roughly $0.25 or less. Summaries and chats are stored in `/opt/docker/reddit2md/ai/` and deleted along with their thread.
 
-The local model shares the GPU with anything else using Ollama (e.g. Vidscribe). Summaries unload it right away; questions keep it loaded for 10 minutes so follow-ups are quick.
+**Auto-summarize** (Settings): Off, Local AI or Claude. Summarizes each newly converted thread, and again after an **Update** that finds new comments.
+
+**Sharing the GPU with Vidscribe:** mount the same host folder into both containers (e.g. `/opt/docker/gpu` at `/gpu`, writable by UID 1000) and set `GPU_LOCK_FILE=/gpu/lock` in both. Local AI here then waits while Vidscribe transcribes or runs its own local AI, and the other way round; the panel shows "Waiting for the GPU (Vidscribe: transcribing)". Claude never waits. Without it, both apps can load models onto the GPU at once. Summaries unload the local model right away; questions keep it loaded for 10 minutes so follow-ups are quick (Vidscribe unloads it before transcribing, as long as both use the same `OLLAMA_MODEL`).
 
 ## Browser extension (Brave / Chrome)
 
@@ -111,6 +113,8 @@ The pill in the header shows the login state (green with your username, red when
 | `OLLAMA_NUM_CTX` | `32768` | Local context window in tokens |
 | `ANTHROPIC_API_KEY` | (none) | Claude API key for Claude summaries and questions |
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Claude model |
+| `AUTO_SUMMARY` | (off) | First-run default for Auto-summarize: `local` or `cloud` |
+| `GPU_LOCK_FILE` | (none) | Lock file shared with Vidscribe, e.g. `/gpu/lock` |
 | `RETENTION_DAYS` | `30` | Initial auto-delete days, until changed in Settings |
 | `TZ` | `UTC` | Initial display time zone, until changed in Settings |
 | `THREADS_DIR` | `/data/threads` | Where saved threads are stored |

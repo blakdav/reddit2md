@@ -394,6 +394,13 @@
             <button type="button" id="tzBrowser">Use this device's zone</button>
           </div>
         </div>
+        <div class="field" id="autoField" hidden>
+          <label for="autoSum">Auto-summarize</label>
+          <div class="row">
+            <select id="autoSum"><option value="">Off</option></select>
+            <span class="hint">after converting a thread, and after an Update that finds new comments.</span>
+          </div>
+        </div>
         <div class="row">
           <button type="button" class="primary" id="saveSettings">Save settings</button>
           <span id="setmsg"></span>
@@ -800,6 +807,11 @@ async function loadSettings() {
   }
   $("tzSel").value = j.settings.timezone;
   $("retDays").value = j.settings.retention_days;
+  const auto = $("autoSum");
+  auto.replaceChildren(new Option("Off", ""));
+  for (const k of ["local", "cloud"]) if (aiInfo[k].enabled || j.settings.auto_summary === k) auto.append(new Option(`${KIND_NAME[k]} (${aiInfo[k].model || "not set up"})`, k));
+  auto.value = j.settings.auto_summary || "";
+  $("autoField").hidden = auto.options.length < 2;
   $("setmsg").textContent = "";
 }
 
@@ -820,7 +832,7 @@ $("saveSettings").addEventListener("click", async () => {
   }
   try {
     const r = await fetch("/api/settings", {method: "PUT", headers: {"Content-Type": "application/json"},
-                                           body: JSON.stringify({retention_days: days, timezone: $("tzSel").value})});
+                                           body: JSON.stringify({retention_days: days, timezone: $("tzSel").value, auto_summary: $("autoSum").value})});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     msg.textContent = "Saved." + (j.deleted ? ` Deleted ${plural(j.deleted, "old thread")}.` : "");

@@ -65,6 +65,18 @@ def _cached_id(url):
     return tid if tid and storage.get(tid) else None
 
 
+def _auto_summary(tid, stats):
+    """Queue a summary after a new thread, or after an Update that brought new comments."""
+    kind = settings.load()["auto_summary"]
+    if not kind or not llm.available()[kind]["enabled"] or (stats and not stats.get("new")):
+        return
+    try:
+        ai.RUNNER.summarize(tid, kind)
+        log.info("Auto-summary (%s) started for %s", kind, tid)
+    except (ValueError, LookupError) as e:
+        log.info("Auto-summary for %s skipped: %s", tid, e)
+
+
 def _run(jid, url, sort, mode):
     job = JOBS[jid]
 
@@ -94,6 +106,7 @@ def _run(jid, url, sort, mode):
         if result["mode"] == "json":
             update["json_ok"] = True
         _session_cache(update)
+        _auto_summary(result["id"], stats)
         job["id"] = result["id"]
         job["title"] = result["post"].get("title")
         job["count"] = result["count"]

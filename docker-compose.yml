@@ -7,6 +7,9 @@ services:
       - "8095:8000"
     volumes:
       - /opt/docker/reddit2md:/data
+      # Optional: a folder shared with Vidscribe (same host path in both compose
+      # files, writable by UID 1000) so local AI here and GPU work there take turns.
+      # - /path/to/shared-gpu-folder:/gpu
     environment:
       - TZ=America/Los_Angeles  # initial display time zone; change it later in the web UI Settings
       - REQUEST_DELAY=1.0   # seconds between Reddit requests
@@ -22,6 +25,8 @@ services:
       # Claude: your Anthropic API key.
       - ANTHROPIC_API_KEY=your-anthropic-api-key
       # - CLAUDE_MODEL=claude-opus-5-5
+      # - AUTO_SUMMARY=local     # first-run default for Settings > Auto-summarize: local or cloud
+      # - GPU_LOCK_FILE=/gpu/lock   # with the shared folder above
     shm_size: "512mb"
     # Lets OLLAMA_URL=http://host.docker.internal:11434 reach an Ollama on this same host.
     extra_hosts:

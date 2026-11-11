@@ -21,6 +21,9 @@ def _default_tz():
 DEFAULTS = {
     "retention_days": int(float(os.environ.get("RETENTION_DAYS", "30"))),
     "timezone": _default_tz(),
+    # Summarize threads automatically after converting, and after an Update
+    # that found new comments: "" (off), "local" or "cloud".
+    "auto_summary": os.environ.get("AUTO_SUMMARY", "").strip() if os.environ.get("AUTO_SUMMARY", "").strip() in ("local", "cloud") else "",
 }
 
 
@@ -53,6 +56,11 @@ def save(updates):
         if tz not in available_timezones():
             raise ValueError(f"Unknown time zone: {tz}")
         data["timezone"] = tz
+    if "auto_summary" in updates:
+        v = updates["auto_summary"] or ""
+        if v not in ("", "local", "cloud"):
+            raise ValueError("Auto-summarize must be off, local or cloud")
+        data["auto_summary"] = v
     with _lock:
         tmp = SETTINGS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

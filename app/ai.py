@@ -20,6 +20,7 @@ import re
 import threading
 import time
 
+import gpulock
 import llm
 import settings
 import storage
@@ -31,6 +32,9 @@ log = logging.getLogger("reddit2md.ai")
 
 AI_DIR = storage.AI_DIR
 ALL = "_all"
+# Shared with Vidscribe when GPU_LOCK_FILE is set, so local AI here never
+# runs at the same time as a transcription or local AI there (see gpulock.py).
+GPU = gpulock.GpuLock("reddit2md")
 
 # How much text goes to the model. Claude can read a whole thread (1M-token
 # context), capped here so one request can't cost more than about $3 on Opus.
@@ -198,8 +202,18 @@ class Runner:
         run = self.running[(key, what)]
         try:
             with self._kind_locks[kind]:
-                run["stage"] = "Thinking"
-                target(run, *args)
+                if kind != "local":
+                    run["stage"] = "Thinking"
+                    target(run, *args)
+                    return
+                other = GPU.holder()
+                run["stage"] = f"Waiting for the GPU ({other})" if other else "Loading the model"
+                GPU.acquire("summarizing" if what.startswith("summary") else "answering a question")
+                try:
+                    run["stage"] = "Thinking"
+                    target(run, *args)
+                finally:
+                    GPU.release()
         except Exception:
             log.exception("%s %s for %s failed", kind, what, key)
         finally:
