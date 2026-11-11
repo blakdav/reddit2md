@@ -124,7 +124,14 @@ def convert():
     sort = body.get("sort") if body.get("sort") in SORTS else "confidence"
     mode = body.get("mode") if body.get("mode") in ("auto", "json", "dom") else "auto"
     view, added = QUEUE.add(url, sort, mode, same=_same_thread)
-    return jsonify(job=view["id"], already_queued=not added, position=view.get("position"))
+    # A ready-to-show line for clients that just display it (the iPhone Shortcut).
+    pos = view.get("position")
+    if not added:
+        message = "Already in the reddit2md queue"
+    else:
+        what = "Update queued" if _cached_id(url) else "Queued"
+        message = f"{what} in reddit2md" + (f" (#{pos} in line)" if pos and pos > 1 else "")
+    return jsonify(job=view["id"], already_queued=not added, position=pos, message=message)
 
 
 @app.get("/api/job/<jid>")

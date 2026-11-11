@@ -72,6 +72,22 @@ Install:
 
 To update it after a `git pull`, click the reload icon on the extension's card.
 
+## iPhone (Shortcuts share sheet)
+
+A Shortcut puts **Send to reddit2md** in the share sheet of the Reddit app and Safari. Sending a thread that's already saved queues an Update (new comments get merged in).
+
+1. Open **Shortcuts**, tap **+**, and name it `Send to reddit2md`.
+2. Tap the **ⓘ** (details) button, turn on **Show in Share Sheet**, and set the input to **URLs** and **Safari web pages**.
+3. In the *Receive* block at the top, set *If there's no input* to **Get Clipboard**. Running it from the home screen or a widget then sends whatever link you copied.
+4. Add a **Get Contents of URL** action:
+   - URL: `http://reddit2md.example.lan:8095/api/convert` (your address)
+   - Method: **POST**
+   - Request Body: **JSON**, with a **Text** field `url` = **Shortcut Input**, and a **Boolean** field `refresh` = **True**
+5. Add **Get Dictionary Value**: key `message`, from **Contents of URL**.
+6. Add **Show Notification** with **Dictionary Value** as the text. It says e.g. `Queued in reddit2md (#2 in line)`, `Update queued in reddit2md` or `Already in the reddit2md queue`. If the server returns an error instead, the notification is empty; the reply's `error` field says why.
+
+Then in the Reddit app: **Share → Share via… → Send to reddit2md** (in Safari: **Share → Send to reddit2md**). Share links (`reddit.com/r/…/s/…`) work. The phone has to reach the server, so be on home Wi-Fi or the VPN. Progress and failures show in the queue panel of the web UI.
+
 ## Settings (web UI)
 
 Open **Settings** (gear icon, top right) to change:
