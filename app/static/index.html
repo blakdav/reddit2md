@@ -1071,8 +1071,9 @@ function usageLine(e) {
   const u = e.usage || {};
   // Claude reports cached input separately; count it as input too.
   const tin = (u.input || 0) + (u.cache_write || 0) + (u.cache_read || 0), tout = u.output || 0;
-  if (tin || tout) parts.push(`${fmtTokens(tin + tout)} tokens (${fmtTokens(tin)} in / ${fmtTokens(tout)} out)`);
-  if (u.cost_usd != null) parts.push(`$${u.cost_usd.toFixed(u.cost_usd < 0.1 ? 3 : 2)}`);
+  if (tin || tout) parts.push(`${fmtTokens(tin + tout)} tokens (${fmtTokens(tin)} in`
+    + (u.cached ? `, ${fmtTokens(u.cached)} of it cached` : "") + ` / ${fmtTokens(tout)} out)`);
+  if (u.cost_usd != null) parts.push(`${u.cost_is_max ? "at most " : ""}$${u.cost_usd.toFixed(u.cost_usd < 0.1 ? 3 : 2)}`);
   if (u.parts) parts.push(`read in ${u.parts} parts`);
   if (e.created) parts.push(fmtDate(e.created));
   return parts.join(" · ");

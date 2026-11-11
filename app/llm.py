@@ -277,6 +277,11 @@ def _openai(system, messages, on_text, max_tokens):
     u = getattr(final, "usage", None)
     if u:
         usage = {"input": u.input_tokens, "output": u.output_tokens}
+        # Part of the input OpenAI served from its prompt cache (billed at a discount; included in input).
+        cached = getattr(getattr(u, "input_tokens_details", None), "cached_tokens", None)
+        if cached:
+            usage["cached"] = cached
+            usage["cost_is_max"] = True  # priced as if uncached: the real charge is lower
         model = getattr(final, "model", "") or OPENAI_MODEL
         rates = next((r for name, r in OPENAI_RATES.items() if model.startswith(name)), None) or OPENAI_RATES.get(OPENAI_MODEL)
         if rates:
