@@ -247,11 +247,11 @@ def _parse_listing(children, parent, nodes, pending):
     for child in children:
         kind, d = child.get("kind"), child.get("data", {})
         if kind == "t1":
-            if d["id"] in nodes:
-                continue
-            node = new_node(d["id"], d.get("author"), d.get("score"), d.get("created_utc"), d.get("body", ""))
-            nodes[d["id"]] = node
-            parent["replies"].append(node)
+            node = nodes.get(d["id"])
+            if node is None:
+                node = new_node(d["id"], d.get("author"), d.get("score"), d.get("created_utc"), d.get("body", ""))
+                nodes[d["id"]] = node
+                parent["replies"].append(node)
             replies = d.get("replies")
             if isinstance(replies, dict):
                 _parse_listing(replies["data"]["children"], node, nodes, pending)
@@ -276,11 +276,34 @@ def scrape_json(page, post_id, sort, counter, progress):
     _parse_listing(data[1]["data"]["children"], root, nodes, pending)
     try:
         _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending)
+        if sort != "new":
+            _sweep_newest(page, post_id, counter, progress, root, nodes)
     except (Incomplete, RateLimited) as e:
         if isinstance(e, RateLimited):
             _note_json_limited(e)
         _mark_partial(counter, str(e), progress)
     return post, root["replies"], len(nodes)
+
+
+def _sweep_newest(page, post_id, counter, progress, root, nodes):
+    """Second pass sorted by New, fetching only comments the first pass didn't reach.
+
+    In Best/Top order, new low-score comments sit at the very end, inside Reddit's last
+    "load more" stubs; if anything about those stubs goes wrong they are lost without an
+    error. Sorted by New they come first. Comments already loaded cost nothing extra, and
+    "continue this thread" is only followed under comments this pass added."""
+    before = len(nodes)
+    known = set(nodes)
+    progress(f"Checking for comments the first pass missed ({before} loaded so far)")
+    qs = "limit=500&depth=100&raw_json=1&sort=new"
+    data = _fetch_json(page, f"/comments/{post_id}.json?{qs}", counter)
+    pending = []
+    _parse_listing(data[1]["data"]["children"], root, nodes, pending)
+    _expand_json(page, post_id, "new", qs, counter, progress, root, nodes, pending, skip_deep=known)
+    found = len(nodes) - before
+    if found:
+        log.warning("Thread %s: the sort=new pass found %d comments the first pass missed", post_id, found)
+        progress(f"Found {found} comments the first pass missed")
 
 
 MODHASH_JS = """() => (window.r && r.config && r.config.modhash)
@@ -303,7 +326,8 @@ API_THINGS_JS = """
     const a = doc.querySelector('.morecomments a');
     const args = a ? [...(a.getAttribute('onclick') || '').matchAll(/'([^']*)'/g)].map(m => m[1]) : [];
     const ids = args.find((x, i) => i >= 2 && /^[a-z0-9]+(,[a-z0-9]+)*$/.test(x)) || '';
-    return {kind: 'more', id, parent_id, children: ids ? ids.split(',') : []};
+    return {kind: 'more', id, parent_id, children: ids ? ids.split(',') : [],
+            raw: ids ? '' : (a ? a.outerHTML : ta.value).slice(0, 400)};
   }
   if (!thing || !thing.classList.contains('comment')) return {kind: t.kind, id, parent_id, unknown: true};
   const entry = thing.querySelector(':scope > .entry') || thing.querySelector('.entry');
@@ -339,6 +363,8 @@ def _normalize_things(page, things):
         if p.get("unknown"):
             raise Blocked("Unrecognized comment in morechildren response")
         if p["kind"] == "more":
+            if not p["children"]:
+                log.warning("morechildren: 'more' stub %s with no readable ids: %s", p["id"], p.get("raw"))
             out.append(("more", {"id": p["id"], "parent_id": p["parent_id"], "children": p["children"]}))
             continue
         if p["html"] is not None:
@@ -350,7 +376,7 @@ def _normalize_things(page, things):
     return out
 
 
-def _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending):
+def _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending, skip_deep=()):
     """Expand every "more" stub. Ids from many stubs share one request (up to MORE_BATCH), which
     keeps a big thread inside Reddit's 100 requests / 10 minutes. morechildren is POSTed with the
     page's modhash, the way old.reddit's own "load more" does it (a plain GET gets HTTP 403)."""
@@ -396,6 +422,11 @@ def _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pendin
             # "Continue this thread": depth limit reached, fetch the subtree rooted at parent.
             pid = parent["id"]
             if pid.startswith("t3_"):
+                if more.get("count"):
+                    log.warning("Thread %s: top-level 'more' stub with no comment ids (%s); its comments "
+                                "can't be loaded this way: %s", post_id, more.get("count"), str(more)[:300])
+                continue
+            if pid in skip_deep:
                 continue
             progress(f"Following deep thread under comment {pid} ({len(nodes)} loaded so far)")
             sub = _fetch_json(page, f"/comments/{post_id}/_/{pid}.json?{qs}", counter)
