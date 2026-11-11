@@ -70,6 +70,8 @@ The pill in the header shows the login state (green with your username, red when
 |---|---|---|
 | `REQUEST_DELAY` | `1.0` | Seconds between Reddit requests |
 | `MAX_REQUESTS` | `400` | Safety cap on requests per thread |
+| `FETCH_TIMEOUT` | `30` | Seconds before a stalled Reddit request is aborted and retried |
+| `MAX_SECONDS` | `900` | Hard time limit per conversion, so a stuck job can't hold the browser forever |
 | `RETENTION_DAYS` | `30` | Initial auto-delete days, until changed in Settings |
 | `TZ` | `UTC` | Initial display time zone, until changed in Settings |
 | `THREADS_DIR` | `/data/threads` | Where saved threads are stored |

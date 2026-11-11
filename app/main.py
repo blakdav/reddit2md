@@ -11,7 +11,7 @@ import settings
 import storage
 from cookies import CookieError, from_values, to_storage_state
 from render import count_new, render, to_html
-from scraper import POST_ID_RE, SHORT_RE, STATE_FILE, ScrapeError, scrape, session_status
+from scraper import MAX_SECONDS, POST_ID_RE, SHORT_RE, STATE_FILE, ScrapeError, scrape, session_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("reddit2md")
@@ -22,6 +22,7 @@ JOBS = {}
 JOB_TTL = 3600
 SORTS = ("confidence", "top", "new", "old", "controversial", "qa")
 browser_lock = threading.Lock()  # one Chromium at a time
+busy = {"job": None}  # id of the conversion job holding browser_lock, if any
 
 storage.start_purger(lambda: settings.load()["retention_days"])
 
@@ -69,9 +70,20 @@ def _run(jid, url, sort, mode):
         log.info("[%s] %s", jid[:8], msg)
 
     try:
-        progress("Waiting for browser" if browser_lock.locked() else "Starting browser")
-        with browser_lock:
+        # Wait for the browser, saying what holds it; give up instead of waiting forever.
+        give_up = time.time() + MAX_SECONDS + 120
+        while not browser_lock.acquire(timeout=1):
+            if time.time() > give_up:
+                raise ScrapeError("Browser stayed busy too long. Restart the container if this keeps happening.")
+            other = JOBS.get(busy["job"] or "")
+            progress(f"Waiting for browser (busy: {other['progress']})" if other else "Waiting for browser (session check)")
+        try:
+            busy["job"] = jid
+            progress("Starting browser")
             result = scrape(url, sort=sort, mode=mode, progress=progress)
+        finally:
+            busy["job"] = None
+            browser_lock.release()
         has_id = POST_ID_RE.search(url) or SHORT_RE.search(url)
         _, stats = storage.save(result, source_url=None if has_id else url)
         job["update"] = stats

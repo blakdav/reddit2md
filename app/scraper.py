@@ -26,6 +26,8 @@ BASE = "https://old.reddit.com"
 DELAY = float(os.environ.get("REQUEST_DELAY", "1.0"))
 MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "400"))
 USER_AGENT = os.environ.get("USER_AGENT", "").strip()
+FETCH_TIMEOUT = float(os.environ.get("FETCH_TIMEOUT", "30"))  # seconds per Reddit request
+MAX_SECONDS = float(os.environ.get("MAX_SECONDS", "900"))  # hard cap per conversion
 
 POST_ID_RE = re.compile(r"/comments/([a-z0-9]+)", re.I)
 SHORT_RE = re.compile(r"redd\.it/([a-z0-9]+)", re.I)
@@ -74,18 +76,37 @@ def _save_state(context):
         log.warning("Could not save refreshed session state: %s", e)
 
 
+def _new_counter():
+    return {"n": 0, "deadline": time.time() + MAX_SECONDS}
+
+
+def _check_deadline(counter):
+    if time.time() > counter["deadline"]:
+        raise ScrapeError(f"Gave up after {MAX_SECONDS:.0f}s (MAX_SECONDS). Reddit may be stalling; try again.")
+
+
 def _fetch_json(page, path, counter):
+    _check_deadline(counter)
     counter["n"] += 1
     if counter["n"] > MAX_REQUESTS:
         raise ScrapeError(f"Hit MAX_REQUESTS ({MAX_REQUESTS}); thread is huge. Raise the limit in compose.")
     for attempt in range(4):
+        # Abort a stalled request so one hung connection can't hold the browser forever.
         res = page.evaluate(
-            """async (p) => {
-                const r = await fetch(p, {credentials: 'include', headers: {'Accept': 'application/json'}});
-                const t = await r.text();
-                return {status: r.status, text: t};
+            """async ([p, ms]) => {
+                const ctl = new AbortController();
+                const timer = setTimeout(() => ctl.abort(), ms);
+                try {
+                    const r = await fetch(p, {credentials: 'include', headers: {'Accept': 'application/json'}, signal: ctl.signal});
+                    const t = await r.text();
+                    return {status: r.status, text: t};
+                } catch (e) {
+                    return {status: 0, text: String(e)};
+                } finally {
+                    clearTimeout(timer);
+                }
             }""",
-            path,
+            [path, int(FETCH_TIMEOUT * 1000)],
         )
         status = res["status"]
         if status == 200:
@@ -94,13 +115,13 @@ def _fetch_json(page, path, counter):
                 return json.loads(res["text"])
             except ValueError:
                 raise Blocked("Non-JSON response")
-        if status == 429 or status >= 500:
+        if status in (0, 429) or status >= 500:
             wait = DELAY * (2 ** (attempt + 2))
-            log.info("HTTP %s on %s, retrying in %.0fs", status, path, wait)
+            log.info("HTTP %s on %s, retrying in %.0fs", status or "timeout/network error", path, wait)
             time.sleep(wait)
             continue
         raise Blocked(f"HTTP {status}")
-    raise ScrapeError(f"Gave up after repeated rate limiting on {path}")
+    raise ScrapeError(f"Gave up after repeated rate limiting or timeouts on {path}")
 
 
 def _logged_in_user(page):
@@ -266,9 +287,10 @@ POST_JS = """
 """
 
 
-def _expand_all(page, progress):
+def _expand_all(page, progress, counter):
     rounds = 0
     while rounds < MAX_REQUESTS:
+        _check_deadline(counter)
         links = page.locator(".thing.morechildren .morecomments a:visible")
         n = links.count()
         if n == 0:
@@ -294,14 +316,14 @@ def _to_nodes(items):
     return out
 
 
-def scrape_dom(page, post_id, sort, progress):
+def scrape_dom(page, post_id, sort, progress, counter):
     page.goto(f"{BASE}/comments/{post_id}/?limit=500&sort={quote(sort)}", wait_until="domcontentloaded", timeout=60000)
     if page.locator("#siteTable > .thing.link").count() == 0:
         raise ScrapeError("Thread page did not render. Session may be logged out or blocked.")
     raw = page.evaluate(POST_JS)
     post = {k: v for k, v in raw.items() if k != "html"}
     post["body"] = html_to_md(raw["html"]).strip() if raw["html"] else ""
-    _expand_all(page, progress)
+    _expand_all(page, progress, counter)
     comments = _to_nodes(page.evaluate(EXTRACT_JS, ".commentarea > .sitetable"))
 
     # Follow "continue this thread" links breadth-first.
@@ -316,6 +338,7 @@ def scrape_dom(page, post_id, sort, progress):
     collect(comments)
     seen = set()
     while queue:
+        _check_deadline(counter)
         node = queue.pop(0)
         url = node.pop("deep")
         if url in seen:
@@ -324,7 +347,7 @@ def scrape_dom(page, post_id, sort, progress):
         progress(f"Opening deep thread under comment {node['id']}")
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         time.sleep(DELAY)
-        _expand_all(page, progress)
+        _expand_all(page, progress, counter)
         sub = _to_nodes(page.evaluate(EXTRACT_JS, ".commentarea > .sitetable"))
         # The deep page's root is the parent comment itself.
         root = next((s for s in sub if s["id"] == node["id"]), sub[0] if sub else None)
@@ -345,6 +368,8 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None):
         browser, context = _launch(p)
         try:
             page = context.new_page()
+            page.set_default_timeout(60000)
+            counter = _new_counter()
             post_id = resolve_post_id(page, url)
             progress(f"Thread ID {post_id}")
             page.goto(f"{BASE}/comments/{post_id}/", wait_until="domcontentloaded", timeout=60000)
@@ -352,16 +377,16 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None):
             used = mode
             if mode in ("auto", "json"):
                 try:
-                    post, comments, n = scrape_json(page, post_id, sort, {"n": 0}, progress)
+                    post, comments, n = scrape_json(page, post_id, sort, counter, progress)
                     used = "json"
                 except Blocked as e:
                     if mode == "json":
                         raise ScrapeError(f"JSON endpoints blocked ({e}). Try DOM mode or refresh the session.")
                     progress(f"JSON blocked ({e}), falling back to DOM mode")
-                    post, comments, n = scrape_dom(page, post_id, sort, progress)
+                    post, comments, n = scrape_dom(page, post_id, sort, progress, counter)
                     used = "dom"
             else:
-                post, comments, n = scrape_dom(page, post_id, sort, progress)
+                post, comments, n = scrape_dom(page, post_id, sort, progress, counter)
             _save_state(context)
             return {"id": post_id.lower(), "post": post, "comments": comments, "count": n, "mode": used,
                     "sort": sort, "user": user}
@@ -381,7 +406,7 @@ def session_status():
             info["user"] = _logged_in_user(page)
             info["logged_in"] = bool(info["user"])
             try:
-                _fetch_json(page, "/api/me.json", {"n": 0})
+                _fetch_json(page, "/api/me.json", _new_counter())
                 info["json_ok"] = True
             except Blocked:
                 info["json_ok"] = False

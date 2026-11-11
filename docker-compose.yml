@@ -12,4 +12,6 @@ services:
       - REQUEST_DELAY=1.0   # seconds between Reddit requests
       - MAX_REQUESTS=400    # safety cap per thread
       - RETENTION_DAYS=30   # initial default; change it later in the web UI Settings
+      # - FETCH_TIMEOUT=30  # seconds before a stalled Reddit request is retried
+      # - MAX_SECONDS=900   # hard cap per conversion so a stuck job frees the browser
     shm_size: "512mb"
