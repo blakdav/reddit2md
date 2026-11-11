@@ -316,6 +316,17 @@ def thread_chat_clear(tid):
     return _clear(tid)
 
 
+@app.post("/api/ai/stop")
+def ai_stop():
+    """Stop a running summary or answer: {"key": thread id or "_all", "what": "chat" or "summary:<kind>"}."""
+    body = request.get_json(silent=True) or {}
+    try:
+        ai.RUNNER.stop(str(body.get("key") or ""), str(body.get("what") or ""))
+    except LookupError as e:
+        return _ai_error(e)
+    return jsonify(ok=True)
+
+
 @app.get("/api/ask")
 def ask_all_state():
     return jsonify(ai.RUNNER.chat_state(ai.ALL))

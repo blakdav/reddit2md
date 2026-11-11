@@ -188,6 +188,7 @@
               max-width: 88%; white-space: pre-wrap; overflow-wrap: anywhere; }
   .msg.bot { border-left: 2px solid var(--border); padding-left: 10px; }
   .msg.bot.error { border-color: var(--err); color: var(--err); }
+  .stopbtn { font-size: 12px; padding: 1px 8px; margin-left: 6px; }
   .msg .note { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
   .askbox { flex: none; border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
   .askbox textarea { resize: vertical; min-height: 60px; max-height: 40vh; font-size: 14px; }
@@ -1113,20 +1114,33 @@ function bubble(m) {
   return d;
 }
 
-function pendingBubble(p) {
+// "Stop" for a running summary or answer. key: thread id or "_all"; what: "chat" or "summary:<kind>".
+function stopButton(key, what, after) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "stopbtn"; b.textContent = "Stop";
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await postJSON("/api/ai/stop", {key, what}); } catch (err) { toast(err.message, true); }
+    after();
+  });
+  return b;
+}
+
+function pendingBubble(p, key, after) {
   const d = document.createElement("div");
   d.className = "msg bot";
   const st = document.createElement("div");
-  st.className = "stage"; st.textContent = `${KIND_NAME[p.kind]}: ${p.stage} (${elapsed(p.started)})`;
+  st.className = "stage"; st.textContent = `${KIND_NAME[p.kind]}: ${p.stage} (${elapsed(p.started)}) `;
+  if (key) st.append(stopButton(key, "chat", after));
   d.append(st);
   if (p.html) { const b = document.createElement("div"); b.className = "aitext"; b.innerHTML = p.html; d.append(b); }
   return d;
 }
 
-function renderChat(box, state, empty) {
+function renderChat(box, state, empty, key, after) {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   box.replaceChildren(...state.messages.map(bubble));
-  if (state.pending) box.append(pendingBubble(state.pending));
+  if (state.pending) box.append(pendingBubble(state.pending, key, after));
   if (!box.children.length) { const e = document.createElement("div"); e.className = "fhint"; e.textContent = empty; box.append(e); }
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
@@ -1168,7 +1182,8 @@ async function loadAI() {
   try { j = await (await fetch(`/api/threads/${encodeURIComponent(id)}/ai`)).json(); } catch { return; }
   if (!current || current.id !== id) return;
   renderSummary(j.summaries);
-  renderChat($("askMsgs"), j.chat, "Ask anything about this thread: what people recommend, whether OP got an answer, the main disagreement...");
+  renderChat($("askMsgs"), j.chat, "Ask anything about this thread: what people recommend, whether OP got an answer, the main disagreement...",
+             current && current.id, loadAI);
   $("askGo").disabled = !!j.chat.pending;
   const busy = j.chat.pending || Object.values(j.summaries).some(e => e && e.running);
   if (busy) aiTimer = setTimeout(loadAI, 1500);
@@ -1220,7 +1235,8 @@ function renderSummary(sums) {
   }
   if (e.running) {
     const st = document.createElement("div"); st.className = "stage";
-    st.textContent = `${KIND_NAME[sumKind]}: ${e.running.stage} (${elapsed(e.running.started)})`;
+    st.textContent = `${KIND_NAME[sumKind]}: ${e.running.stage} (${elapsed(e.running.started)}) `;
+    if (current) st.append(stopButton(current.id, `summary:${sumKind}`, loadAI));
     box.append(st);
     if (e.running.html) { const t = document.createElement("div"); t.className = "aitext"; t.innerHTML = e.running.html; box.append(t); }
     return;
@@ -1338,7 +1354,7 @@ async function loadAll() {
   clearTimeout(allTimer);
   let j;
   try { j = await (await fetch("/api/ask")).json(); } catch { return; }
-  renderChat($("allMsgs"), j, "No questions yet.");
+  renderChat($("allMsgs"), j, "No questions yet.", "_all", loadAll);
   $("allGo").disabled = !!j.pending;
   if (j.pending && location.hash.startsWith("#find")) allTimer = setTimeout(loadAll, 1500);
 }

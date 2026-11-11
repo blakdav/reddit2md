@@ -114,7 +114,8 @@ def _local(system, messages, on_text, keep_alive):
     def post(b):
         req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(b).encode(),
                                      headers={"Content-Type": "application/json"})
-        return urllib.request.urlopen(req, timeout=1800)
+        # Max wait for the next streamed piece (model loading and reading a long prompt come first).
+        return urllib.request.urlopen(req, timeout=600)
 
     try:
         try:

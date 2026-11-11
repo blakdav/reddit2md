@@ -46,6 +46,31 @@ CLOUD_THREAD_CHARS = 2_500_000
 CLOUD_ALL_CHARS = 200_000
 CONVERSATION_CHARS = 12_000  # room kept for earlier questions in local chat
 
+# A local job that runs longer than this is stopped (a stuck Ollama would otherwise block every
+# later local job). Waiting for a turn or for the GPU has its own, longer limit.
+LOCAL_MAX_SECONDS = int(os.environ.get("LOCAL_AI_MAX_SECONDS", "3600"))
+WAIT_MAX_SECONDS = int(os.environ.get("LOCAL_AI_MAX_WAIT", "7200"))
+
+
+class Stopped(Exception):
+    """The user pressed Stop, or a time limit ran out."""
+
+
+def _check(run):
+    if run.get("cancel"):
+        raise Stopped("Stopped")
+    if run.get("deadline") and now() > run["deadline"]:
+        raise Stopped(f"Stopped after {LOCAL_MAX_SECONDS // 60} minutes; the local model seems stuck "
+                      "(check that Ollama is running)")
+
+
+def _streamer(run):
+    """on_text callback: show the answer so far, and stop the stream if Stop was pressed."""
+    def on_text(t):
+        _check(run)
+        run["text"] = t
+    return on_text
+
 # Focused answers (Claude and OpenAI, big threads): a cheap scout model reads the whole thread
 # in parts and lists the comments that bear on the question; the main model answers from those
 # plus the thread's summary. About 1/7 the cost of sending everything to the main model.
@@ -213,7 +238,7 @@ class Runner:
     def __init__(self):
         self._lock = threading.Lock()
         self._kind_locks = {k: threading.Lock() for k in llm.KINDS}
-        self.running = {}  # (key, what) -> {"kind", "stage", "text", "started"}
+        self.running = {}  # (key, what) -> {"kind", "stage", "text", "started", "label", "has_turn", "cancel"}
 
     def busy(self, key, what):
         return (key, what) in self.running
@@ -223,31 +248,76 @@ class Runner:
         with self._lock:
             if (key, what) in self.running:
                 raise ValueError("Already running")
-            self.running[(key, what)] = {"kind": kind, "stage": "Waiting for the model", "text": "",
-                                         "started": now()}
+            self.running[(key, what)] = {"kind": kind, "stage": "Starting", "text": "", "started": now(),
+                                         "label": _label(key, what)}
         threading.Thread(target=self._wrap, args=(key, what, kind, target, args), daemon=True).start()
+
+    def stop(self, key, what):
+        run = self.running.get((key, what))
+        if not run:
+            raise LookupError("Nothing is running")
+        run["cancel"] = True
+        run["stage"] = "Stopping"
+
+    def _wait_turn(self, run, kind):
+        """One job per kind at a time. While waiting, say which job we're waiting for."""
+        lock, since = self._kind_locks[kind], now()
+        while not lock.acquire(timeout=2):
+            _check(run)
+            if now() - since > WAIT_MAX_SECONDS:
+                raise Stopped(f"Gave up after waiting {WAIT_MAX_SECONDS // 60} minutes for another {llm.NAMES[kind]} job")
+            other = next((r for r in list(self.running.values()) if r is not run and r["kind"] == kind and r.get("has_turn")), None)
+            run["stage"] = (f"Waiting for another {llm.NAMES[kind]} job to finish: {other['label']} "
+                            f"({other['stage']}, {int((now() - other['started']) // 60)} min so far)"
+                            if other else f"Waiting for another {llm.NAMES[kind]} job to finish")
+        run["has_turn"] = True
+        return lock
+
+    def _wait_gpu(self, run, detail):
+        since = now()
+        while not GPU.try_acquire(detail):
+            _check(run)
+            if now() - since > WAIT_MAX_SECONDS:
+                raise Stopped(f"Gave up after waiting {WAIT_MAX_SECONDS // 60} minutes for the GPU")
+            run["stage"] = f"Waiting for the GPU ({GPU.holder() or 'in use'})"
+            time.sleep(2)
 
     def _wrap(self, key, what, kind, target, args):
         run = self.running[(key, what)]
         try:
-            with self._kind_locks[kind]:
+            lock = self._wait_turn(run, kind)
+            try:
                 if kind != "local":
                     run["stage"] = "Thinking"
                     target(run, *args)
                     return
-                other = GPU.holder()
-                run["stage"] = f"Waiting for the GPU ({other})" if other else "Loading the model"
-                GPU.acquire("summarizing" if what.startswith("summary") else "answering a question")
+                self._wait_gpu(run, "summarizing" if what.startswith("summary") else "answering a question")
                 try:
                     run["stage"] = "Thinking"
+                    run["deadline"] = now() + LOCAL_MAX_SECONDS
                     target(run, *args)
                 finally:
                     GPU.release()
+            finally:
+                lock.release()
+        except Stopped as e:
+            # Stopped before the job itself started: record it where the answer or summary would go.
+            log.info("%s %s for %s: %s", kind, what, key, e)
+            self._record_stop(key, what, kind, str(e))
         except Exception:
             log.exception("%s %s for %s failed", kind, what, key)
         finally:
             with self._lock:
                 self.running.pop((key, what), None)
+
+    def _record_stop(self, key, what, kind, msg):
+        if what == "chat":
+            entry = {"role": "assistant", "kind": kind, "text": "", "error": msg, "created": now()}
+            _update(key, lambda d: d.setdefault("chat", []).append(entry))
+        elif what.startswith("summary:") and storage.get(key):
+            k = what.split(":", 1)[1]
+            entry = {**(stored(key).get("summaries", {}).get(k) or {}), "error": msg, "error_at": now()}
+            _update(key, lambda d: d.setdefault("summaries", {}).__setitem__(k, entry))
 
     def pending(self, key, what):
         r = self.running.get((key, what))
@@ -271,7 +341,7 @@ class Runner:
                     raise RuntimeError("This thread is too long to summarize in one request.")
                 run["stage"] = "Summarizing"
                 text, usage, model, _ = llm.ask(kind, SUMMARY_SYSTEM, [{"role": "user", "content": text_in}],
-                                                on_text=lambda t: run.update(text=t))
+                                                on_text=_streamer(run))
             else:
                 text, usage, model = self._summarize_local(run, data, tz)
             entry = {"text": text, "model": model, "created": now(), "elapsed": round(now() - started, 1),
@@ -288,23 +358,25 @@ class Runner:
         if len(text_in) <= budget:
             run["stage"] = "Summarizing"
             text, usage, model, _ = llm.ask("local", SUMMARY_SYSTEM, [{"role": "user", "content": text_in}],
-                                            on_text=lambda t: run.update(text=t))
+                                            on_text=_streamer(run))
             return text, usage, model
         # Too long for the local context: notes per part, then a summary of the notes.
         head = thread_text.header(data, tz)
         parts = thread_text.chunks(data, tz, budget - len(head) - 200)
         notes, tin, tout = [], 0, 0
         for i, part in enumerate(parts, 1):
+            _check(run)
             run["stage"] = f"Reading part {i} of {len(parts)}"
             note, usage, _, _ = llm.ask("local", CHUNK_SYSTEM,
-                                        [{"role": "user", "content": f"{head}\n\nComments, part {i} of {len(parts)}:\n\n{part}"}])
+                                        [{"role": "user", "content": f"{head}\n\nComments, part {i} of {len(parts)}:\n\n{part}"}],
+                                        on_text=lambda t: _check(run))
             notes.append(f"### Part {i}\n{note}")
             tin += usage.get("input") or 0
             tout += usage.get("output") or 0
         run["stage"] = "Merging parts"
         merged = f"{head}\n\nNotes on the comments, written part by part:\n\n" + "\n\n".join(notes)
         text, usage, model, _ = llm.ask("local", SUMMARY_SYSTEM, [{"role": "user", "content": merged[:budget]}],
-                                        on_text=lambda t: run.update(text=t))
+                                        on_text=_streamer(run))
         return text, {"input": tin + (usage.get("input") or 0), "output": tout + (usage.get("output") or 0),
                       "parts": len(parts)}, model
 
@@ -362,7 +434,7 @@ class Runner:
             run["refs"] = refs
             run["stage"] = "Thinking"
             # A focused prompt changes with every question, so caching it would only add Claude's cache-write cost.
-            text, usage, model, blocks = llm.ask(kind, system, messages, on_text=lambda t: run.update(text=t),
+            text, usage, model, blocks = llm.ask(kind, system, messages, on_text=_streamer(run),
                                                  keep_alive="10m", cache=(key != ALL and not scout), max_tokens=32000)
             if scout:
                 usage = dict(usage, scout=scout)
@@ -503,6 +575,16 @@ class Runner:
         if self.busy(key, "chat"):
             raise ValueError("Still answering; wait for it to finish")
         _update(key, lambda d: d.pop("chat", None))
+
+
+def _label(key, what):
+    """Short description of a job, shown to other jobs waiting for their turn."""
+    kind = "summary" if what.startswith("summary") else "question"
+    if key == ALL:
+        return "question across all threads"
+    data = storage.get(key) or {}
+    title = (data.get("title") or key)[:50]
+    return f"{kind} of \u201c{title}\u201d" if kind == "summary" else f"question on \u201c{title}\u201d"
 
 
 def _pairs(messages):
