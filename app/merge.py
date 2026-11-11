@@ -4,6 +4,12 @@
 - Comments that were deleted or removed on Reddit keep their saved text and get a status label.
 - Comments that vanished from Reddit entirely are re-inserted under their parent with status "gone".
 - Changed comment text is marked as edited.
+
+Partial fetches (the scrape stopped early) need care in both directions:
+- If the NEW fetch is partial, a comment missing from it may just not have been loaded, so it is
+  carried over unchanged instead of being labelled "gone".
+- If the OLD copy was partial, comments that already existed back then were probably just not
+  loaded, so they are not counted or badged as new.
 """
 
 import copy
@@ -29,9 +35,10 @@ def stamp_new(comments, ts):
     return comments
 
 
-def merge(old, new_comments, new_post, now, same_mode=True):
-    """Return (comments, post, stats). `old` is the saved thread dict."""
+def merge(old, new_comments, new_post, now, same_mode=True, partial=False):
+    """Return (comments, post, stats, count). `old` is the saved thread dict; partial: the new fetch stopped early."""
     fallback_seen = old.get("first_saved") or old.get("saved_at") or now
+    old_partial_at = old.get("saved_at") if old.get("partial") else None
     old_nodes = {n["id"]: (n, pid) for n, pid in _walk(old.get("comments", []), None, [])}
     merged = copy.deepcopy(new_comments)
     index = {}
@@ -41,8 +48,11 @@ def merge(old, new_comments, new_post, now, same_mode=True):
         index[n["id"]] = n
         prev = old_nodes.get(n["id"], (None, None))[0]
         if prev is None:
-            n["first_seen"] = now
-            stats["new"] += 1
+            if old_partial_at and n.get("created") and n["created"] < old_partial_at:
+                n["first_seen"] = fallback_seen  # existed last time; that fetch just didn't reach it
+            else:
+                n["first_seen"] = now
+                stats["new"] += 1
             continue
         n["first_seen"] = prev.get("first_seen", fallback_seen)
         status = DELETED_BODIES.get((n.get("body") or "").strip())
@@ -71,11 +81,12 @@ def merge(old, new_comments, new_post, now, same_mode=True):
         keep = {k: v for k, v in n.items() if k != "replies"}
         keep["replies"] = []
         keep.setdefault("first_seen", fallback_seen)
-        keep["status"] = keep.get("status") or "gone"
+        if not partial:
+            keep["status"] = keep.get("status") or "gone"
         parent = index.get(pid) if pid else root
         (parent or root)["replies"].append(keep)
         index[n["id"]] = keep
-        if not n.get("status"):  # only count comments that disappeared during this update
+        if not partial and not n.get("status"):  # only count comments that disappeared during this update
             stats["kept_deleted"] += 1
 
     post = dict(new_post)

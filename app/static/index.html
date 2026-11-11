@@ -82,6 +82,7 @@
   .job .jt { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .job .jm { color: var(--muted); font-size: 12px; word-break: break-word; }
   .job.error .jm { color: var(--err); }
+  .ptag { color: #e5b567; border: 1px solid #6b5426; border-radius: 4px; padding: 0 4px; font-size: 11px; margin-left: 4px; }
   .job .jw { color: #e5b567; font-size: 12px; word-break: break-word; }
   .job .acts { display: flex; flex-direction: column; gap: 2px; }
   .job .acts button { font-size: 13px; padding: 1px 6px; border: 0; background: transparent; color: var(--muted); }
@@ -569,6 +570,12 @@ async function openThread(id) {
   const updated = current.first_saved && current.saved_at - current.first_saved > 1;
   const dates = updated ? `First saved ${fmtDate(current.first_saved)} · Updated ${fmtDate(current.saved_at)}` : `Saved ${fmtDate(current.saved_at)}`;
   $("meta").textContent = `${dates} · ${current.count} comments · ${SORT_NAMES[current.sort] || "Best"}`;
+  if (current.partial) {
+    const p = document.createElement("span");
+    p.className = "ptag"; p.textContent = "Partial";
+    p.title = `Partial download: ${current.partial}. Click Update to fetch the rest.`;
+    $("meta").append(" ", p);
+  }
   const n = current.new_count || 0;
   $("newOnly").textContent = n ? `New only (${n})` : "New only";
   $("newOnly").disabled = !n;
@@ -679,7 +686,7 @@ function renderQueue(list) {
     const m = document.createElement("div");
     m.className = "jm";
     if (j.status === "error") m.textContent = j.error;
-    else if (j.status === "done") m.textContent = `${j.update ? "Updated" : "Saved"} · ${plural(j.count, "comment")} · ${fmtDate(j.finished_at)}`;
+    else if (j.status === "done") m.textContent = `${j.update ? "Updated" : "Saved"}${j.partial ? " (partial)" : ""} · ${plural(j.count, "comment")} · ${fmtDate(j.finished_at)}`;
     else if (j.status === "cancelled") m.textContent = "Cancelled";
     else m.textContent = j.status === "running" ? `${j.progress} (${j.elapsed}s)` : j.progress;
     info.append(t, m);
@@ -810,6 +817,11 @@ function renderList() {
     const m = document.createElement("div");
     m.className = "m";
     m.textContent = `r/${t.subreddit} · ${fmtDate(t.saved_at)} · ${t.count} comments`;
+    if (t.partial) {
+      const p = document.createElement("span");
+      p.className = "ptag"; p.textContent = "Partial"; p.title = `Partial download: ${t.partial}. Update to fetch the rest.`;
+      m.append(p);
+    }
     info.append(title, m);
 
     const acts = document.createElement("div");

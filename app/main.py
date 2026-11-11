@@ -88,9 +88,9 @@ def _run(job, progress, cancelled, stats):
     _auto_summary(result["id"], update)
     fields = {"id_saved": result["id"], "title": result["post"].get("title"), "count": result["count"],
               "update": update, "mode_used": result["mode"]}
-    if result.get("skipped"):
-        fields["warning"] = (f"Gave up on {result['skipped']} 'load more' link(s) after repeated failures "
-                             "(likely rate limiting); some comments may be missing. Update later to fill them in.")
+    if result.get("partial"):
+        fields["partial"] = True
+        fields["warning"] = f"Partial: {result['partial']}. Run Update later to fetch the rest."
     return fields
 
 

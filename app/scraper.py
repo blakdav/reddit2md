@@ -41,6 +41,10 @@ class Blocked(Exception):
     pass
 
 
+class Incomplete(ScrapeError):
+    """Hit MAX_SECONDS or MAX_REQUESTS. Callers that already have comments save them as a partial thread."""
+
+
 def new_node(cid, author, score, created, body):
     return {"id": cid, "author": author, "score": score, "created": created,
             "body": body, "replies": []}
@@ -100,14 +104,19 @@ def _sleep(counter, seconds):
 
 def _check_deadline(counter):
     if time.time() > counter["deadline"]:
-        raise ScrapeError(f"Gave up after {MAX_SECONDS:.0f}s (MAX_SECONDS). Reddit may be stalling; try again.")
+        raise Incomplete(f"Stopped after {MAX_SECONDS:.0f}s (MAX_SECONDS); Reddit was slow or rate limiting")
+
+
+def _mark_partial(counter, reason, progress):
+    counter["partial"] = reason
+    progress(f"{reason}. Saving what was collected")
 
 
 def _fetch_json(page, path, counter):
     _check_deadline(counter)
     counter["n"] += 1
     if counter["n"] > MAX_REQUESTS:
-        raise ScrapeError(f"Hit MAX_REQUESTS ({MAX_REQUESTS}); thread is huge. Raise the limit in compose.")
+        raise Incomplete(f"Hit MAX_REQUESTS ({MAX_REQUESTS}); the thread is huge (raise the limit in compose)")
     for attempt in range(4):
         # Abort a stalled request so one hung connection can't hold the browser forever.
         res = page.evaluate(
@@ -206,7 +215,14 @@ def scrape_json(page, post_id, sort, counter, progress):
     nodes = {}
     pending = []
     _parse_listing(data[1]["data"]["children"], root, nodes, pending)
+    try:
+        _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending)
+    except Incomplete as e:
+        _mark_partial(counter, str(e), progress)
+    return post, root["replies"], len(nodes)
 
+
+def _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending):
     while pending:
         parent, more = pending.pop(0)
         all_ids = more.get("children", [])
@@ -252,7 +268,6 @@ def scrape_json(page, post_id, sort, counter, progress):
                     replies = c["data"].get("replies")
                     if isinstance(replies, dict):
                         _parse_listing(replies["data"]["children"], parent, nodes, pending)
-    return post, root["replies"], len(nodes)
 
 
 # ---------------------------------------------------------------- DOM mode (fallback)
@@ -361,6 +376,8 @@ def _expand_all(page, progress, counter):
         _sleep(counter, wait)
     if skipped:
         progress(f"Gave up on {skipped} 'load more' link(s); some comments may be missing")
+    if rounds >= MAX_REQUESTS:
+        raise Incomplete(f"Hit MAX_REQUESTS ({MAX_REQUESTS}) clicking 'load more' (raise the limit in compose)")
 
 
 def _to_nodes(items):
@@ -381,7 +398,11 @@ def scrape_dom(page, post_id, sort, progress, counter):
     raw = page.evaluate(POST_JS)
     post = {k: v for k, v in raw.items() if k != "html"}
     post["body"] = html_to_md(raw["html"]).strip() if raw["html"] else ""
-    _expand_all(page, progress, counter)
+    try:
+        _expand_all(page, progress, counter)
+    except Incomplete as e:
+        # Keep whatever is on the page; deep threads are skipped below.
+        _mark_partial(counter, str(e), progress)
     comments = _to_nodes(page.evaluate(EXTRACT_JS, ".commentarea > .sitetable"))
 
     # Follow "continue this thread" links breadth-first.
@@ -395,8 +416,12 @@ def scrape_dom(page, post_id, sort, progress, counter):
 
     collect(comments)
     seen = set()
-    while queue:
-        _check_deadline(counter)
+    while queue and not counter.get("partial"):
+        try:
+            _check_deadline(counter)
+        except Incomplete as e:
+            _mark_partial(counter, str(e), progress)
+            break
         node = queue.pop(0)
         url = node.pop("deep")
         if url in seen:
@@ -405,13 +430,21 @@ def scrape_dom(page, post_id, sort, progress, counter):
         progress(f"Opening deep thread under comment {node['id']}")
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         _sleep(counter, DELAY)
-        _expand_all(page, progress, counter)
+        try:
+            _expand_all(page, progress, counter)
+        except Incomplete as e:
+            _mark_partial(counter, str(e), progress)
         sub = _to_nodes(page.evaluate(EXTRACT_JS, ".commentarea > .sitetable"))
         # The deep page's root is the parent comment itself.
         root = next((s for s in sub if s["id"] == node["id"]), sub[0] if sub else None)
         if root:
             node["replies"].extend(root["replies"])
             collect(root["replies"])
+
+    if queue:
+        counter["deep_skipped"] = len(queue)
+    for n in queue:  # deep threads never opened (stopped early)
+        n.pop("deep", None)
 
     def count(nodes):
         return sum(1 + count(n["replies"]) for n in nodes)
@@ -450,10 +483,22 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None, cance
                 post, comments, n = scrape_dom(page, post_id, sort, progress, counter)
             _save_state(context)
             return {"id": post_id.lower(), "post": post, "comments": comments, "count": n, "mode": used,
-                    "sort": sort, "user": user, "skipped": counter["skipped"]}
+                    "sort": sort, "user": user, "partial": _partial_reason(counter)}
         finally:
             context.close()
             browser.close()
+
+
+def _partial_reason(counter):
+    """Why this fetch is missing comments, or None when it got everything it could find."""
+    reasons = []
+    if counter.get("partial"):
+        reasons.append(counter["partial"])
+    if counter.get("skipped"):
+        reasons.append(f"skipped {counter['skipped']} 'load more' link(s) that kept failing (likely rate limiting)")
+    if counter.get("deep_skipped"):
+        reasons.append(f"{counter['deep_skipped']} 'continue this thread' link(s) not opened")
+    return "; ".join(reasons) or None
 
 
 def session_status():

@@ -125,6 +125,9 @@ def render(data, scores=True, tz="UTC", web=False, new_only=False, order="saved"
         meta.append(f"{data['count']} comments captured")
     lines.append(" · ".join(meta))
     lines.append("")
+    if data.get("partial"):
+        got = f"{data['count']} of about {data['expected']}" if data.get("expected") else str(data["count"])
+        lines += [f"> **Partial download:** {got} comments captured. {data['partial']}.", ""]
     lines.append(f"Source: {post['permalink']}")
     if post.get("url"):
         lines.append(f"Link: {post['url']}")

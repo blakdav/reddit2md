@@ -20,7 +20,7 @@ ID_RE = re.compile(r"^[a-z0-9]{1,16}$")
 _lock = threading.Lock()
 
 META_KEYS = ("id", "title", "subreddit", "author", "permalink", "created", "saved_at", "first_saved", "prev_fetch",
-             "count", "expected", "sort", "mode", "new_count", "kept_deleted")
+             "count", "expected", "sort", "mode", "new_count", "kept_deleted", "partial")
 
 
 def _path(tid):
@@ -79,7 +79,8 @@ def save(result, source_url=None):
     stats = None
     if old:
         comments, post, stats, count = merge.merge(old, comments, post, now,
-                                                   same_mode=old.get("mode") == result.get("mode"))
+                                                   same_mode=old.get("mode") == result.get("mode"),
+                                                   partial=bool(result.get("partial")))
         first_saved = old.get("first_saved") or old.get("saved_at") or now
         prev_fetch = old.get("saved_at")
     else:
@@ -93,6 +94,8 @@ def save(result, source_url=None):
         "sort": result.get("sort"), "mode": result.get("mode"),
         "new_count": stats["new"] if stats else 0,
         "kept_deleted": _kept(comments),
+        # Set while the saved copy may be missing comments; a later complete fetch clears it.
+        "partial": result.get("partial") or None,
         "post": post, "comments": comments,
     }
     with _lock:
