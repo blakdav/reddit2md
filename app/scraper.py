@@ -14,7 +14,7 @@ import logging
 import os
 import re
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from markdownify import markdownify as html_to_md
 from playwright.sync_api import sync_playwright
@@ -131,7 +131,8 @@ def _mark_partial(counter, reason, progress):
     progress(f"{reason}. Saving what was collected")
 
 
-def _fetch_json(page, path, counter):
+def _fetch_json(page, path, counter, form=None, modhash=""):
+    """GET path, or POST it as a form when `form` is given (with the modhash, like Reddit's own page)."""
     _check_deadline(counter)
     counter["n"] += 1
     if counter["n"] > MAX_REQUESTS:
@@ -139,11 +140,18 @@ def _fetch_json(page, path, counter):
     for attempt in range(4):
         # Abort a stalled request so one hung connection can't hold the browser forever.
         res = page.evaluate(
-            """async ([p, ms]) => {
+            """async ([p, ms, form, uh]) => {
                 const ctl = new AbortController();
                 const timer = setTimeout(() => ctl.abort(), ms);
                 try {
-                    const r = await fetch(p, {credentials: 'include', headers: {'Accept': 'application/json'}, signal: ctl.signal});
+                    const opts = {credentials: 'include', headers: {'Accept': 'application/json'}, signal: ctl.signal};
+                    if (form !== null) {
+                        opts.method = 'POST';
+                        opts.body = form;
+                        opts.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+                        if (uh) opts.headers['X-Modhash'] = uh;
+                    }
+                    const r = await fetch(p, opts);
                     const t = await r.text();
                     const h = (n) => r.headers.get(n);
                     return {status: r.status, text: t, remaining: h('x-ratelimit-remaining'),
@@ -154,7 +162,7 @@ def _fetch_json(page, path, counter):
                     clearTimeout(timer);
                 }
             }""",
-            [path, int(FETCH_TIMEOUT * 1000)],
+            [path, int(FETCH_TIMEOUT * 1000), urlencode(form) if form else None, modhash],
         )
         status = res["status"]
         reset = _num(res.get("retry")) or _num(res.get("reset"))
@@ -275,41 +283,55 @@ def scrape_json(page, post_id, sort, counter, progress):
     return post, root["replies"], len(nodes)
 
 
+MODHASH_JS = """() => (window.r && r.config && r.config.modhash)
+    || (document.querySelector('input[name=uh]') || {}).value || ''"""
+MORE_BATCH = 100  # comment ids per morechildren request (Reddit's maximum)
+
+
 def _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending):
+    """Expand every "more" stub. Ids from many stubs share one request (up to MORE_BATCH), which
+    keeps a big thread inside Reddit's 100 requests / 10 minutes. morechildren is POSTed with the
+    page's modhash, the way old.reddit's own "load more" does it (a plain GET gets HTTP 403)."""
+    modhash = page.evaluate(MODHASH_JS) or ""
     while pending:
-        parent, more = pending.pop(0)
-        all_ids = more.get("children", [])
-        ids = [c for c in all_ids if c not in nodes]
-        if all_ids:
-            for i in range(0, len(ids), 100):
-                batch = ids[i:i + 100]
-                progress(f"Expanding {len(batch)} hidden comments ({len(nodes)} loaded so far)")
-                r = _fetch_json(
-                    page,
-                    f"/api/morechildren.json?api_type=json&raw_json=1&limit_children=false"
-                    f"&sort={quote(sort)}&link_id=t3_{post_id}&children={','.join(batch)}",
-                    counter,
-                )
-                things = r.get("json", {}).get("data", {}).get("things", [])
-                orphans = []
-                for t in things:
-                    d = t.get("data", {})
-                    pid = d.get("parent_id", "")
-                    target = root if pid.startswith("t3_") else nodes.get(pid[3:])
-                    if t.get("kind") == "more":
-                        pending.append((target or parent, d))
-                        continue
-                    if t.get("kind") != "t1" or d.get("id") in nodes:
-                        continue
-                    node = new_node(d["id"], d.get("author"), d.get("score"), d.get("created_utc"), d.get("body", ""))
-                    nodes[d["id"]] = node
-                    if target is None:
-                        orphans.append((pid[3:], node))
-                    else:
-                        target["replies"].append(node)
-                for pid, node in orphans:
-                    nodes.get(pid, parent)["replies"].append(node)
-        else:
+        stubs, pending[:] = list(pending), []
+        want = []  # (comment id, parent node of its stub)
+        for parent, more in stubs:
+            if more.get("children"):
+                want += [(c, parent) for c in more["children"] if c not in nodes]
+        seen = set()
+        want = [w for w in want if not (w[0] in seen or seen.add(w[0]))]
+        for i in range(0, len(want), MORE_BATCH):
+            batch = want[i:i + MORE_BATCH]
+            fallback = dict(batch)
+            left = len(want) - i - len(batch)
+            progress(f"Expanding {len(batch)} hidden comments ({len(nodes)} loaded so far"
+                     + (f", {left} more waiting)" if left else ")"))
+            r = _fetch_json(page, "/api/morechildren", counter, modhash=modhash, form={
+                "api_type": "json", "raw_json": "1", "limit_children": "false", "sort": sort,
+                "link_id": f"t3_{post_id}", "children": ",".join(c for c, _ in batch), "uh": modhash})
+            things = r.get("json", {}).get("data", {}).get("things", [])
+            orphans = []
+            for t in things:
+                d = t.get("data", {})
+                pid = d.get("parent_id", "")
+                target = root if pid.startswith("t3_") else nodes.get(pid[3:])
+                if t.get("kind") == "more":
+                    pending.append((target or fallback.get(pid[3:]) or root, d))
+                    continue
+                if t.get("kind") != "t1" or d.get("id") in nodes:
+                    continue
+                node = new_node(d["id"], d.get("author"), d.get("score"), d.get("created_utc"), d.get("body", ""))
+                nodes[d["id"]] = node
+                if target is None:
+                    orphans.append((pid[3:], node, fallback.get(d["id"])))
+                else:
+                    target["replies"].append(node)
+            for pid, node, fb in orphans:
+                (nodes.get(pid) or fb or root)["replies"].append(node)
+        for parent, more in stubs:
+            if more.get("children"):
+                continue
             # "Continue this thread": depth limit reached, fetch the subtree rooted at parent.
             pid = parent["id"]
             if pid.startswith("t3_"):

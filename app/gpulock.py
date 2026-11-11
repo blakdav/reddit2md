@@ -9,7 +9,8 @@ the same host because they share the kernel. Without GPU_LOCK_FILE this is a
 plain thread lock, as before.
 
 The holder writes its name into the file, so an app that's waiting can show
-who has the GPU. Same file in Vidscribe and reddit2md; keep them in sync.
+who has the GPU. Same file in Vidscribe, reddit2md and TubeStreamer; keep
+them in sync.
 """
 
 import fcntl
@@ -64,6 +65,34 @@ class GpuLock:
             os.pwrite(fd, f"{self.name}{': ' + detail if detail else ''}\n{int(time.time())}\n".encode(), 0)
         except OSError:
             pass  # read-only handle: locked, just unnamed
+        self._fd = fd
+        return True
+
+    def try_acquire(self, detail=""):
+        """Take the lock only if it's free right now. Returns True if taken
+        (then release() it), False if another thread or app holds it."""
+        if not self._thread.acquire(blocking=False):
+            return False
+        if not self.path:
+            return True
+        fd = self._open()
+        if fd is None:
+            return True
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            self._thread.release()
+            return False
+        except OSError as e:
+            log.warning("GPU lock failed (%s); continuing without it", e)
+            os.close(fd)
+            return True
+        try:
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, f"{self.name}{': ' + detail if detail else ''}\n{int(time.time())}\n".encode(), 0)
+        except OSError:
+            pass
         self._fd = fd
         return True
 

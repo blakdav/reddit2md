@@ -7,7 +7,7 @@ Reddit closed anonymous `.json` access and self-serve API keys in 2026, so this 
 ## How it works
 
 1. Loads `old.reddit.com` in Chromium with your uploaded Reddit cookies.
-2. **JSON mode:** calls Reddit's JSON endpoints with `fetch()` from inside the page, so the real browser sends your cookies. Every "load more comments" stub is expanded through `/api/morechildren`, and every "continue this thread" stub through a subtree request.
+2. **JSON mode:** calls Reddit's JSON endpoints with `fetch()` from inside the page, so the real browser sends your cookies. Every "load more comments" stub is expanded through `/api/morechildren` (POSTed with the page's modhash, like old.reddit's own button, and batching up to 100 hidden comments from many stubs per request, so a big thread fits in Reddit's 100 requests per 10 minutes), and every "continue this thread" stub through a subtree request.
 3. **DOM mode (fallback):** if the JSON endpoints are blocked or rate limited (HTTP 429), it clicks every "load more comments" link, opens every "continue this thread" page, and converts the rendered HTML.
    After a 429 it skips the JSON API for `JSON_COOLDOWN` seconds instead of retrying it on every thread, and honours Reddit's rate-limit headers (waiting for the window to reset when it says the budget is used up).
 4. Writes refreshed cookies back to the state file after each run, which keeps the session alive longer.
