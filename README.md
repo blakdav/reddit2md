@@ -8,7 +8,8 @@ Reddit closed anonymous `.json` access and self-serve API keys in 2026, so this 
 
 1. Loads `old.reddit.com` in Chromium with your uploaded Reddit cookies.
 2. **JSON mode:** calls Reddit's JSON endpoints with `fetch()` from inside the page, so the real browser sends your cookies. Every "load more comments" stub is expanded through `/api/morechildren`, and every "continue this thread" stub through a subtree request.
-3. **DOM mode (fallback):** if the JSON endpoints are blocked, it clicks every "load more comments" link, opens every "continue this thread" page, and converts the rendered HTML.
+3. **DOM mode (fallback):** if the JSON endpoints are blocked or rate limited (HTTP 429), it clicks every "load more comments" link, opens every "continue this thread" page, and converts the rendered HTML.
+   After a 429 it skips the JSON API for `JSON_COOLDOWN` seconds instead of retrying it on every thread, and honours Reddit's rate-limit headers (waiting for the window to reset when it says the budget is used up).
 4. Writes refreshed cookies back to the state file after each run, which keeps the session alive longer.
 
 Nested replies are rendered as nested blockquotes.
@@ -116,6 +117,7 @@ The pill in the header shows the login state (green with your username, red when
 | `MAX_SECONDS` | `900` | Hard time limit per conversion, so a stuck job can't hold the browser forever |
 | `QUEUE_PAUSE` | `15` | Seconds to wait between queued threads |
 | `RATE_LIMIT_PAUSE` | `120` | Seconds to wait after a thread where Reddit was rate limiting |
+| `JSON_COOLDOWN` | `900` | After Reddit rate limits the JSON API (HTTP 429), read thread pages instead (DOM mode) for this many seconds |
 | `OLLAMA_URL` | (none) | Ollama server for local AI, e.g. `http://host.docker.internal:11434` |
 | `OLLAMA_MODEL` | `qwen3:14b` | Local model (must be pulled in Ollama) |
 | `OLLAMA_NUM_CTX` | `32768` | Local context window in tokens |

@@ -41,6 +41,18 @@ class Blocked(Exception):
     pass
 
 
+class RateLimited(Blocked):
+    """Reddit answered 429. retry_after: seconds Reddit asked us to wait (from its headers), if known."""
+    def __init__(self, msg, retry_after=None):
+        super().__init__(msg)
+        self.retry_after = retry_after
+
+
+# After a 429 on the JSON endpoints, skip them (go straight to page mode) until this time.
+JSON_COOLDOWN = float(os.environ.get("JSON_COOLDOWN", "900"))
+_json_blocked_until = 0.0
+
+
 class Incomplete(ScrapeError):
     """Hit MAX_SECONDS or MAX_REQUESTS. Callers that already have comments save them as a partial thread."""
 
@@ -126,7 +138,9 @@ def _fetch_json(page, path, counter):
                 try {
                     const r = await fetch(p, {credentials: 'include', headers: {'Accept': 'application/json'}, signal: ctl.signal});
                     const t = await r.text();
-                    return {status: r.status, text: t};
+                    const h = (n) => r.headers.get(n);
+                    return {status: r.status, text: t, remaining: h('x-ratelimit-remaining'),
+                            reset: h('x-ratelimit-reset'), retry: h('retry-after')};
                 } catch (e) {
                     return {status: 0, text: String(e)};
                 } finally {
@@ -136,21 +150,51 @@ def _fetch_json(page, path, counter):
             [path, int(FETCH_TIMEOUT * 1000)],
         )
         status = res["status"]
+        reset = _num(res.get("retry")) or _num(res.get("reset"))
         if status == 200:
-            _sleep(counter, DELAY)
+            remaining = _num(res.get("remaining"))
+            if remaining is not None and remaining < 1 and reset:
+                # Out of requests for this window: wait for it to reset rather than earn a 429.
+                log.info("Reddit rate limit used up; waiting %.0fs for it to reset", reset)
+                _sleep(counter, min(reset, 600) + 1)
+            else:
+                _sleep(counter, DELAY)
             try:
                 return json.loads(res["text"])
             except ValueError:
                 raise Blocked("Non-JSON response")
-        if status in (0, 429) or status >= 500:
+        if status == 429:
+            counter["throttled"] += 1
+            # One quick retry; after that, hand control back so the caller can switch to page mode or save
+            # what it has, instead of burning a minute on doubling waits.
+            if attempt == 0 and (reset or 0) <= 10:
+                wait = max(reset or 0, DELAY * 4)
+                log.info("HTTP 429 on %s, retrying in %.0fs", path, wait)
+                _sleep(counter, wait)
+                continue
+            raise RateLimited(f"Reddit is rate limiting the JSON API (HTTP 429"
+                              + (f", reset in {reset:.0f}s)" if reset else ")"), reset)
+        if status == 0 or status >= 500:
             wait = DELAY * (2 ** (attempt + 2))
-            if status == 429:
-                counter["throttled"] += 1
             log.info("HTTP %s on %s, retrying in %.0fs", status or "timeout/network error", path, wait)
             _sleep(counter, wait)
             continue
         raise Blocked(f"HTTP {status}")
-    raise ScrapeError(f"Reddit kept rate limiting or timing out (HTTP {res['status'] or 'timeout'}) on {path}")
+    raise ScrapeError(f"Reddit kept timing out or erroring (HTTP {res['status'] or 'timeout'}) on {path}")
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _note_json_limited(e):
+    global _json_blocked_until
+    _json_blocked_until = time.time() + max(JSON_COOLDOWN, e.retry_after or 0)
+    log.info("JSON API rate limited; using page mode until %s",
+             time.strftime("%H:%M", time.localtime(_json_blocked_until)))
 
 
 def _logged_in_user(page):
@@ -217,7 +261,9 @@ def scrape_json(page, post_id, sort, counter, progress):
     _parse_listing(data[1]["data"]["children"], root, nodes, pending)
     try:
         _expand_json(page, post_id, sort, qs, counter, progress, root, nodes, pending)
-    except Incomplete as e:
+    except (Incomplete, RateLimited) as e:
+        if isinstance(e, RateLimited):
+            _note_json_limited(e)
         _mark_partial(counter, str(e), progress)
     return post, root["replies"], len(nodes)
 
@@ -469,14 +515,20 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None, cance
             page.goto(f"{BASE}/comments/{post_id}/", wait_until="domcontentloaded", timeout=60000)
             user = _logged_in_user(page)
             used = mode
-            if mode in ("auto", "json"):
+            if mode == "auto" and time.time() < _json_blocked_until:
+                progress("JSON API was rate limited recently; reading the page instead")
+                post, comments, n = scrape_dom(page, post_id, sort, progress, counter)
+                used = "dom"
+            elif mode in ("auto", "json"):
                 try:
                     post, comments, n = scrape_json(page, post_id, sort, counter, progress)
                     used = "json"
                 except Blocked as e:
+                    if isinstance(e, RateLimited):
+                        _note_json_limited(e)
                     if mode == "json":
-                        raise ScrapeError(f"JSON endpoints blocked ({e}). Try DOM mode or refresh the session.")
-                    progress(f"JSON blocked ({e}), falling back to DOM mode")
+                        raise ScrapeError(f"JSON endpoints blocked ({e}). Try Browser clicks mode or refresh the session.")
+                    progress(f"JSON blocked ({e}), reading the page instead")
                     post, comments, n = scrape_dom(page, post_id, sort, progress, counter)
                     used = "dom"
             else:
