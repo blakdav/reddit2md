@@ -3,29 +3,26 @@ import logging
 import os
 import threading
 import time
-import uuid
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
 import ai
+import jobs
 import llm
 import settings
 import storage
 from search import INDEX
 from cookies import CookieError, from_values, to_storage_state
 from render import count_new, render, to_html
-from scraper import MAX_SECONDS, POST_ID_RE, SHORT_RE, STATE_FILE, ScrapeError, scrape, session_status
+from scraper import POST_ID_RE, SHORT_RE, STATE_FILE, scrape, session_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("reddit2md")
 
 app = Flask(__name__, static_folder="static")
 
-JOBS = {}
-JOB_TTL = 3600
 SORTS = ("confidence", "top", "new", "old", "controversial", "qa")
-browser_lock = threading.Lock()  # one Chromium at a time
-busy = {"job": None}  # id of the conversion job holding browser_lock, if any
+browser_lock = threading.Lock()  # one Chromium at a time (the queue worker, or a session check)
 
 storage.start_purger(lambda: settings.load()["retention_days"])
 
@@ -52,12 +49,6 @@ def _session_cache(update=None):
     return cache
 
 
-def _cleanup_jobs():
-    cutoff = time.time() - JOB_TTL
-    for jid in [j for j, v in JOBS.items() if v["started"] < cutoff]:
-        JOBS.pop(jid, None)
-
-
 def _cached_id(url):
     """Find a saved thread for this URL without touching Reddit."""
     m = POST_ID_RE.search(url) or SHORT_RE.search(url)
@@ -77,46 +68,42 @@ def _auto_summary(tid, stats):
         log.info("Auto-summary for %s skipped: %s", tid, e)
 
 
-def _run(jid, url, sort, mode):
-    job = JOBS[jid]
-
-    def progress(msg):
-        job["progress"] = msg
-        log.info("[%s] %s", jid[:8], msg)
-
+def _run(job, progress, cancelled, stats):
+    """Queue runner: fetch one thread, save it, and return what the queue should show."""
+    url = job["url"]
+    if not browser_lock.acquire(blocking=False):
+        progress("Waiting for the browser (session check)")
+        browser_lock.acquire()
     try:
-        # Wait for the browser, saying what holds it; give up instead of waiting forever.
-        give_up = time.time() + MAX_SECONDS + 120
-        while not browser_lock.acquire(timeout=1):
-            if time.time() > give_up:
-                raise ScrapeError("Browser stayed busy too long. Restart the container if this keeps happening.")
-            other = JOBS.get(busy["job"] or "")
-            progress(f"Waiting for browser (busy: {other['progress']})" if other else "Waiting for browser (session check)")
-        try:
-            busy["job"] = jid
-            progress("Starting browser")
-            result = scrape(url, sort=sort, mode=mode, progress=progress)
-        finally:
-            busy["job"] = None
-            browser_lock.release()
-        has_id = POST_ID_RE.search(url) or SHORT_RE.search(url)
-        _, stats = storage.save(result, source_url=None if has_id else url)
-        job["update"] = stats
-        update = {"logged_in": bool(result.get("user")), "user": result.get("user")}
-        if result["mode"] == "json":
-            update["json_ok"] = True
-        _session_cache(update)
-        _auto_summary(result["id"], stats)
-        job["id"] = result["id"]
-        job["title"] = result["post"].get("title")
-        job["count"] = result["count"]
-        job["status"] = "done"
-        progress("Done")
-    except ScrapeError as e:
-        job["status"], job["error"] = "error", str(e)
-    except Exception as e:
-        log.exception("Job %s failed", jid)
-        job["status"], job["error"] = "error", f"{type(e).__name__}: {e}"
+        progress("Starting browser")
+        result = scrape(url, sort=job["sort"], mode=job["mode"], progress=progress, cancelled=cancelled, stats=stats)
+    finally:
+        browser_lock.release()
+    has_id = POST_ID_RE.search(url) or SHORT_RE.search(url)
+    _, update = storage.save(result, source_url=None if has_id else url)
+    session = {"logged_in": bool(result.get("user")), "user": result.get("user")}
+    if result["mode"] == "json":
+        session["json_ok"] = True
+    _session_cache(session)
+    _auto_summary(result["id"], update)
+    fields = {"id_saved": result["id"], "title": result["post"].get("title"), "count": result["count"],
+              "update": update, "mode_used": result["mode"]}
+    if result.get("skipped"):
+        fields["warning"] = (f"Gave up on {result['skipped']} 'load more' link(s) after repeated failures "
+                             "(likely rate limiting); some comments may be missing. Update later to fill them in.")
+    return fields
+
+
+QUEUE = jobs.Queue(os.path.join(os.path.dirname(STATE_FILE), "queue.json"), _run)
+
+
+def _job_out(view):
+    """Older clients (the browser extension) read the saved thread's id as "id" on a finished job."""
+    out = dict(view)
+    out["job"] = out["id"]
+    if out.get("id_saved"):
+        out["id"] = out["id_saved"]
+    return out
 
 
 @app.get("/")
@@ -126,7 +113,6 @@ def index():
 
 @app.post("/api/convert")
 def convert():
-    _cleanup_jobs()
     body = request.get_json(silent=True) or {}
     url = (body.get("url") or "").strip()
     if not url:
@@ -137,20 +123,43 @@ def convert():
             return jsonify(cached=True, id=tid)
     sort = body.get("sort") if body.get("sort") in SORTS else "confidence"
     mode = body.get("mode") if body.get("mode") in ("auto", "json", "dom") else "auto"
-    jid = uuid.uuid4().hex
-    JOBS[jid] = {"status": "running", "progress": "Queued", "started": time.time(), "url": url}
-    threading.Thread(target=_run, args=(jid, url, sort, mode), daemon=True).start()
-    return jsonify(job=jid)
+    view, added = QUEUE.add(url, sort, mode, same=_same_thread)
+    return jsonify(job=view["id"], already_queued=not added, position=view.get("position"))
 
 
 @app.get("/api/job/<jid>")
 def job(jid):
-    j = JOBS.get(jid)
+    j = QUEUE.find(jid)
     if not j:
         return jsonify(error="Unknown job"), 404
-    out = dict(j)
-    out["elapsed"] = round(time.time() - j["started"])
-    return jsonify(out)
+    return jsonify(_job_out(QUEUE.view(j)))
+
+
+@app.get("/api/queue")
+def queue_list():
+    return jsonify(jobs=[_job_out(v) for v in QUEUE.list()], pause=jobs.QUEUE_PAUSE,
+                   rate_limit_pause=jobs.RATE_LIMIT_PAUSE)
+
+
+@app.delete("/api/queue/<jid>")
+def queue_remove(jid):
+    if not QUEUE.remove(jid):
+        return jsonify(error="Unknown job"), 404
+    return jsonify(ok=True)
+
+
+@app.post("/api/queue/<jid>/retry")
+def queue_retry(jid):
+    view = QUEUE.retry(jid)
+    if not view:
+        return jsonify(error="Not retryable"), 400
+    return jsonify(job=view["id"])
+
+
+@app.post("/api/queue/clear")
+def queue_clear():
+    QUEUE.clear_finished()
+    return jsonify(ok=True)
 
 
 # ---------------------------------------------------------------- saved threads
@@ -164,9 +173,9 @@ def _same_thread(a, b):
 def lookup():
     """State of one Reddit URL, for the browser extension's icon: saved, converting, failed, or none."""
     url = (request.args.get("url") or "").strip()
-    jobs = sorted((j for j in JOBS.values() if _same_thread(j.get("url"), url)), key=lambda j: j["started"])
-    last = jobs[-1] if jobs else None
-    if last and last["status"] == "running":
+    mine = [v for v in QUEUE.list() if _same_thread(v.get("url"), url)]
+    last = mine[-1] if mine else None
+    if last and last["status"] in jobs.ACTIVE:
         return jsonify(state="running", progress=last["progress"])
     tid = _cached_id(url) if url else None
     if tid:

@@ -76,8 +76,26 @@ def _save_state(context):
         log.warning("Could not save refreshed session state: %s", e)
 
 
-def _new_counter():
-    return {"n": 0, "deadline": time.time() + MAX_SECONDS}
+class Cancelled(Exception):
+    pass
+
+
+def _new_counter(cancelled=None):
+    """Per-conversion state: request count, deadline, and how often Reddit throttled us."""
+    return {"n": 0, "deadline": time.time() + MAX_SECONDS, "throttled": 0, "skipped": 0,
+            "cancelled": cancelled or (lambda: False)}
+
+
+def _sleep(counter, seconds):
+    """time.sleep that a cancelled job can interrupt."""
+    end = time.time() + seconds
+    while True:
+        if counter["cancelled"]():
+            raise Cancelled()
+        left = end - time.time()
+        if left <= 0:
+            return
+        time.sleep(min(1.0, left))
 
 
 def _check_deadline(counter):
@@ -110,18 +128,20 @@ def _fetch_json(page, path, counter):
         )
         status = res["status"]
         if status == 200:
-            time.sleep(DELAY)
+            _sleep(counter, DELAY)
             try:
                 return json.loads(res["text"])
             except ValueError:
                 raise Blocked("Non-JSON response")
         if status in (0, 429) or status >= 500:
             wait = DELAY * (2 ** (attempt + 2))
+            if status == 429:
+                counter["throttled"] += 1
             log.info("HTTP %s on %s, retrying in %.0fs", status or "timeout/network error", path, wait)
-            time.sleep(wait)
+            _sleep(counter, wait)
             continue
         raise Blocked(f"HTTP {status}")
-    raise ScrapeError(f"Gave up after repeated rate limiting or timeouts on {path}")
+    raise ScrapeError(f"Reddit kept rate limiting or timing out (HTTP {res['status'] or 'timeout'}) on {path}")
 
 
 def _logged_in_user(page):
@@ -324,19 +344,21 @@ def _expand_all(page, progress, counter):
                 pass
         if loaded:
             stalls = 0
-            time.sleep(DELAY)
+            _sleep(counter, DELAY)
             continue
         stalls += 1
+        counter["throttled"] += 1
         if handle:
             tries = handle.evaluate(
                 "(e, max) => { const t = +(e.dataset.r2mTries || 0) + 1; e.dataset.r2mTries = t;"
                 " if (t >= max) e.dataset.r2mSkip = '1'; return t; }", LINK_TRIES)
             if tries >= LINK_TRIES:
                 skipped += 1
+                counter["skipped"] += 1
                 log.info("Skipping a 'load more' link after %d failed clicks", tries)
         wait = min(60, DELAY * 2 ** stalls)
         progress(f"'Load more' didn't load (Reddit may be rate limiting); waiting {wait:.0f}s")
-        time.sleep(wait)
+        _sleep(counter, wait)
     if skipped:
         progress(f"Gave up on {skipped} 'load more' link(s); some comments may be missing")
 
@@ -382,7 +404,7 @@ def scrape_dom(page, post_id, sort, progress, counter):
         seen.add(url)
         progress(f"Opening deep thread under comment {node['id']}")
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        time.sleep(DELAY)
+        _sleep(counter, DELAY)
         _expand_all(page, progress, counter)
         sub = _to_nodes(page.evaluate(EXTRACT_JS, ".commentarea > .sitetable"))
         # The deep page's root is the parent comment itself.
@@ -399,13 +421,16 @@ def scrape_dom(page, post_id, sort, progress, counter):
 
 # ---------------------------------------------------------------- entry points
 
-def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None):
+def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None, cancelled=None, stats=None):
+    """stats, if given, is filled with throttled/skipped counts even when the scrape fails."""
+    counter = _new_counter(cancelled)
+    if stats is not None:
+        stats["counter"] = counter
     with sync_playwright() as p:
         browser, context = _launch(p)
         try:
             page = context.new_page()
             page.set_default_timeout(60000)
-            counter = _new_counter()
             post_id = resolve_post_id(page, url)
             progress(f"Thread ID {post_id}")
             page.goto(f"{BASE}/comments/{post_id}/", wait_until="domcontentloaded", timeout=60000)
@@ -425,7 +450,7 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None):
                 post, comments, n = scrape_dom(page, post_id, sort, progress, counter)
             _save_state(context)
             return {"id": post_id.lower(), "post": post, "comments": comments, "count": n, "mode": used,
-                    "sort": sort, "user": user}
+                    "sort": sort, "user": user, "skipped": counter["skipped"]}
         finally:
             context.close()
             browser.close()

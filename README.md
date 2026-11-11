@@ -13,6 +13,12 @@ Reddit closed anonymous `.json` access and self-serve API keys in 2026, so this 
 
 Nested replies are rendered as nested blockquotes.
 
+## Queue
+
+Conversions go into a queue and run one at a time, oldest first, with a pause between threads (`QUEUE_PAUSE`, 15 s by default; `RATE_LIMIT_PAUSE`, 120 s, after a thread where Reddit was rate limiting). That way a burst of sends from the browser extension doesn't hammer Reddit. You can paste the next URL while one is running. Sending a thread that's already waiting or running returns the existing job instead of adding it twice.
+
+The queue panel at the top of the sidebar shows each job: what it's doing, how many are ahead, or why it failed. Click a job to see its log (the last 40 progress lines, with times). Failed or cancelled jobs can be retried (↻), a running job can be cancelled (✕), and **Clear finished** tidies the list. If some "load more" links had to be skipped, the job still saves but shows a warning; run **Update** later to fill in the gaps. The queue is saved in `/opt/docker/reddit2md/queue.json`, so waiting threads survive a container restart, and a job that was running at the time goes back to the front of the line. The last 50 finished jobs are kept.
+
 ## Saved threads
 
 Every converted thread is saved on the server in `/opt/docker/reddit2md/threads/`, one JSON file per thread. Converting the same thread again loads the saved copy instantly without contacting Reddit.
@@ -108,6 +114,8 @@ The pill in the header shows the login state (green with your username, red when
 | `MAX_REQUESTS` | `400` | Safety cap on requests per thread |
 | `FETCH_TIMEOUT` | `30` | Seconds before a stalled Reddit request is aborted and retried |
 | `MAX_SECONDS` | `900` | Hard time limit per conversion, so a stuck job can't hold the browser forever |
+| `QUEUE_PAUSE` | `15` | Seconds to wait between queued threads |
+| `RATE_LIMIT_PAUSE` | `120` | Seconds to wait after a thread where Reddit was rate limiting |
 | `OLLAMA_URL` | (none) | Ollama server for local AI, e.g. `http://host.docker.internal:11434` |
 | `OLLAMA_MODEL` | `qwen3:14b` | Local model (must be pulled in Ollama) |
 | `OLLAMA_NUM_CTX` | `32768` | Local context window in tokens |

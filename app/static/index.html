@@ -67,6 +67,27 @@
   .item .acts a:hover { color: var(--link); background: var(--bg); }
   .item .acts button:hover { color: var(--err); background: var(--bg); }
   .empty { color: var(--muted); font-size: 14px; padding: 12px; }
+  /* ---------- queue (sidebar) ---------- */
+  #queue { flex: none; max-height: 42%; overflow: auto; margin: 0 8px 8px; border: 1px solid var(--border);
+           border-radius: 10px; background: var(--bg); }
+  .qhead { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12px; color: var(--muted);
+           text-transform: uppercase; letter-spacing: .04em; position: sticky; top: 0; background: var(--bg); }
+  .qhead span { margin-right: auto; }
+  .qhead button { font-size: 12px; padding: 2px 8px; text-transform: none; letter-spacing: 0; }
+  .job { display: flex; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border); font-size: 13px; cursor: pointer; }
+  .job:hover { background: var(--raised); }
+  .job .ic { flex: none; width: 16px; text-align: center; color: var(--muted); }
+  .job.running .ic { color: var(--accent); } .job.done .ic { color: var(--ok); } .job.error .ic { color: var(--err); }
+  .job .info { flex: 1; min-width: 0; }
+  .job .jt { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .jm { color: var(--muted); font-size: 12px; word-break: break-word; }
+  .job.error .jm { color: var(--err); }
+  .job .jw { color: #e5b567; font-size: 12px; word-break: break-word; }
+  .job .acts { display: flex; flex-direction: column; gap: 2px; }
+  .job .acts button { font-size: 13px; padding: 1px 6px; border: 0; background: transparent; color: var(--muted); }
+  .job .acts button:hover { color: var(--text); background: var(--bg); }
+  .job pre { margin: 6px 0 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+             font-size: 11px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
   .backdrop { display: none; }
 
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -251,6 +272,10 @@
       <button class="primary" id="newBtn" type="button">+ New thread</button>
       <input type="search" id="filter" placeholder="Filter saved threads (Enter searches comments)">
     </div>
+    <div id="queue" hidden>
+      <div class="qhead"><span id="qtitle">Queue</span><button type="button" id="qclear" title="Remove finished jobs from the list">Clear finished</button></div>
+      <div id="qlist"></div>
+    </div>
     <div id="list"></div>
     <div class="side-foot" id="retention"></div>
   </aside>
@@ -291,6 +316,7 @@
         <ol>
           <li>Paste a thread URL above and click <b>Convert</b>. Share links and old.reddit links work too.</li>
           <li>Every comment is expanded and the thread is saved on the server.</li>
+          <li>Threads are fetched one at a time, in order, with a short pause between them. You can paste the next one right away; the queue in the sidebar shows progress and why a thread failed.</li>
           <li>Saved threads are in the sidebar. Converting one again loads the saved copy instantly.</li>
         </ol>
         <div class="notice" id="homeNotice" hidden></div>
@@ -554,22 +580,12 @@ async function openThread(id) {
   loadAI();
 }
 
-// ------------------------------------------------------------ convert / refresh
-async function poll(job) {
-  while (true) {
-    await new Promise(r => setTimeout(r, 1500));
-    const r = await fetch(`/api/job/${job}`);
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error || "Job lost");
-    if (j.status === "running") { setStatus(`${j.progress} (${j.elapsed}s)`); continue; }
-    if (j.status === "error") throw new Error(j.error);
-    return j;
-  }
-}
+// ------------------------------------------------------------ convert / refresh (queued on the server)
+const mine = new Map();   // job id -> {refresh, at}: jobs sent from this tab, to report when they finish
+let lastSent = null;      // most recent job sent from this tab; opened when it finishes if you're still on Home
 
 async function convert(url, refresh) {
-  $("go").disabled = $("refresh").disabled = true;
-  setStatus(refresh ? "Fetching new comments from Reddit" : "Starting");
+  if (!url) return;
   try {
     const r = await fetch("/api/convert", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -585,30 +601,131 @@ async function convert(url, refresh) {
       $("url").value = "";
       return;
     }
-    const done = await poll(j.job);
-    await loadList();
-    newOnly = false;
-    go(`#t=${done.id}`);
-    if (done.update) {
-      const u = done.update, parts = [];
-      if (u.new) parts.push(`${u.new} new`);
-      if (u.edited) parts.push(`${u.edited} edited`);
-      if (u.kept_deleted) parts.push(`${u.kept_deleted} deleted or removed kept`);
-      const msg = parts.length ? `Updated: ${parts.join(", ")}` : "Updated: no changes";
-      setStatus(`${msg} (${done.elapsed}s)`, "ok"); toast(msg);
-    } else {
-      setStatus(`Done in ${done.elapsed}s. Saved.`, "ok");
-      toast(`Converted and saved in ${done.elapsed}s`);
-    }
+    mine.set(j.job, {refresh});
+    lastSent = j.job;
+    const where = j.position > 1 ? ` (#${j.position} in line)` : "";
+    const msg = j.already_queued ? "Already in the queue" : (refresh ? "Update queued" : "Queued") + where;
+    setStatus(`${msg}. Progress is in the queue in the sidebar.`);
+    toast(msg);
     $("url").value = "";
-    refreshSession(true);
+    loadQueue();
   } catch (err) {
     setStatus(err.message, "err");
     toast(err.message, true);
-  } finally {
-    $("go").disabled = $("refresh").disabled = false;
   }
 }
+
+function finished(j) {
+  const sent = mine.get(j.job);
+  mine.delete(j.job);
+  if (j.status === "error") { setStatus(`Failed: ${j.error}`, "err"); toast(`Failed: ${j.error}`, true); return; }
+  if (j.status !== "done") return;
+  loadList();
+  let msg;
+  if (j.update) {
+    const u = j.update, parts = [];
+    if (u.new) parts.push(`${u.new} new`);
+    if (u.edited) parts.push(`${u.edited} edited`);
+    if (u.kept_deleted) parts.push(`${u.kept_deleted} deleted or removed kept`);
+    msg = parts.length ? `Updated: ${parts.join(", ")}` : "Updated: no changes";
+  } else msg = `Saved ${plural(j.count, "comment")} in ${j.elapsed}s`;
+  const title = j.title ? `${j.title.slice(0, 60)}: ` : "";
+  setStatus(title + msg + (j.warning ? ` (${j.warning})` : ""), j.warning ? "" : "ok");
+  toast(title + msg, !!j.warning);
+  if (current && current.id === j.id) { newOnly = false; openThread(j.id); }
+  else if (j.job === lastSent && !current && !location.hash) go(`#t=${j.id}`);
+  refreshSession(true);
+}
+
+// ------------------------------------------------------------ queue panel
+const JOB_ICONS = {queued: "○", running: "↓", done: "✓", error: "✗", cancelled: "–"};
+let queueTimer, openLog = new Set(), seen = new Map();
+
+async function loadQueue() {
+  clearTimeout(queueTimer);
+  let list = [];
+  try { list = (await (await fetch("/api/queue")).json()).jobs || []; } catch { list = null; }
+  if (list) {
+    for (const j of list) {
+      const was = seen.get(j.job);
+      if (mine.has(j.job) && j.status !== "queued" && j.status !== "running" && was !== j.status) finished(j);
+      seen.set(j.job, j.status);
+    }
+    renderQueue(list);
+  }
+  const active = list && list.some(j => j.status === "queued" || j.status === "running");
+  queueTimer = setTimeout(loadQueue, active ? 2000 : 15000);
+}
+
+function renderQueue(list) {
+  $("queue").hidden = !list.length;
+  const active = list.filter(j => j.status === "queued" || j.status === "running").length;
+  $("qtitle").textContent = active ? `Queue · ${active} active` : "Queue";
+  $("qclear").hidden = active === list.length;
+  // Newest first, like the saved list; active jobs first of all.
+  const order = j => (j.status === "running" ? 0 : j.status === "queued" ? 1 : 2);
+  const rows = [...list].sort((a, b) => order(a) - order(b) || (order(a) === 1 ? a.added_at - b.added_at : b.added_at - a.added_at));
+  const box = $("qlist");
+  box.replaceChildren();
+  for (const j of rows) {
+    const row = document.createElement("div");
+    row.className = `job ${j.status}`;
+    const ic = document.createElement("div");
+    ic.className = "ic"; ic.textContent = JOB_ICONS[j.status] || "?";
+    const info = document.createElement("div");
+    info.className = "info";
+    const t = document.createElement("div");
+    t.className = "jt"; t.textContent = j.title || j.url.replace(/^https?:\/\/(www\.|old\.)?/, ""); t.title = j.url;
+    const m = document.createElement("div");
+    m.className = "jm";
+    if (j.status === "error") m.textContent = j.error;
+    else if (j.status === "done") m.textContent = `${j.update ? "Updated" : "Saved"} · ${plural(j.count, "comment")} · ${fmtDate(j.finished_at)}`;
+    else if (j.status === "cancelled") m.textContent = "Cancelled";
+    else m.textContent = j.status === "running" ? `${j.progress} (${j.elapsed}s)` : j.progress;
+    info.append(t, m);
+    if (j.warning) {
+      const w = document.createElement("div");
+      w.className = "jw"; w.textContent = j.warning;
+      info.append(w);
+    }
+    if (openLog.has(j.job) && j.log && j.log.length) {
+      const pre = document.createElement("pre");
+      pre.textContent = j.log.map(([ts, msg]) => `${new Date(ts * 1000).toLocaleTimeString([], {timeZone: tz})}  ${msg}`).join("\n");
+      info.append(pre);
+    }
+    const acts = document.createElement("div");
+    acts.className = "acts";
+    const btn = (txt, title, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = txt; b.title = title; b.setAttribute("aria-label", title);
+      b.addEventListener("click", async (e) => { e.stopPropagation(); await fn(); loadQueue(); });
+      acts.append(b);
+    };
+    const live = j.status === "queued" || j.status === "running";
+    btn("✕", j.status === "running" ? "Cancel" : live ? "Remove from queue" : "Remove from list", async () => {
+      if (j.status === "running" && !confirm("Cancel this conversion? Nothing is saved from a cancelled run.")) return;
+      await fetch(`/api/queue/${j.job}`, {method: "DELETE"});
+    });
+    if (j.status === "error" || j.status === "cancelled") {
+      btn("↻", "Retry", async () => {
+        const r = await (await fetch(`/api/queue/${j.job}/retry`, {method: "POST"})).json();
+        if (r.job) { mine.set(r.job, {}); }
+      });
+    }
+    row.title = j.status === "done" ? "Open thread" : "Show or hide the log";
+    row.addEventListener("click", () => {
+      if (j.status === "done" && !openLog.has(j.job) && j.id) { go(`#t=${j.id}`); closeDrawer(); return; }
+      openLog.has(j.job) ? openLog.delete(j.job) : openLog.add(j.job);
+      renderQueue(list);
+    });
+    if (j.status === "done" && j.log && j.log.length) {
+      btn("☰", "Show log", async () => { openLog.has(j.job) ? openLog.delete(j.job) : openLog.add(j.job); });
+    }
+    row.append(ic, info, acts);
+    box.append(row);
+  }
+}
+$("qclear").addEventListener("click", async () => { await fetch("/api/queue/clear", {method: "POST"}); loadQueue(); });
 
 $("form").addEventListener("submit", (e) => { e.preventDefault(); convert($("url").value.trim(), false); });
 $("refresh").addEventListener("click", () => current && convert(current.permalink, true));
@@ -1154,6 +1271,7 @@ loadAIInfo().then(() => {
 });
 loadList().then(() => route());
 refreshSession(true);
+loadQueue();
 </script>
 </body>
 </html>
