@@ -34,6 +34,9 @@ CLAUDE_MODEL = setting("CLAUDE_MODEL", "claude-opus-5-5")
 ANTHROPIC_KEY = setting("ANTHROPIC_API_KEY")
 OPENAI_KEY = setting("OPENAI_API_KEY")
 OPENAI_MODEL = setting("OPENAI_MODEL", "gpt-6-astra")
+# Cheap models that skim a big thread for the comments a question needs (see ai.py, "focused" answers).
+CLAUDE_SCOUT_MODEL = setting("CLAUDE_SCOUT_MODEL", "claude-haiku-5-5")
+OPENAI_SCOUT_MODEL = setting("OPENAI_SCOUT_MODEL", "gpt-6-luna")
 
 # USD per million tokens: (input, output, cache write 5m, cache read), for the cost shown in the UI.
 CLAUDE_RATES = {
@@ -59,8 +62,10 @@ def available():
     return {
         "local": {"enabled": bool(OLLAMA_URL), "model": OLLAMA_MODEL if OLLAMA_URL else None,
                   "chars": local_chars()},
-        "cloud": {"enabled": bool(ANTHROPIC_KEY), "model": CLAUDE_MODEL if ANTHROPIC_KEY else None},
-        "openai": {"enabled": bool(OPENAI_KEY), "model": OPENAI_MODEL if OPENAI_KEY else None},
+        "cloud": {"enabled": bool(ANTHROPIC_KEY), "model": CLAUDE_MODEL if ANTHROPIC_KEY else None,
+                  "scout": CLAUDE_SCOUT_MODEL if ANTHROPIC_KEY else None},
+        "openai": {"enabled": bool(OPENAI_KEY), "model": OPENAI_MODEL if OPENAI_KEY else None,
+                   "scout": OPENAI_SCOUT_MODEL if OPENAI_KEY else None},
     }
 
 
@@ -76,13 +81,16 @@ def check(kind):
         raise ValueError(f"{NAMES[kind]} isn't set up on the server")
 
 
-def ask(kind, system, messages, on_text=None, keep_alive=0, cache=False, max_tokens=16000):
+def ask(kind, system, messages, on_text=None, keep_alive=0, cache=False, max_tokens=16000, scout=False):
+    """scout=True: use the kind's cheap scout model with its default reasoning effort (Claude/OpenAI only)."""
     check(kind)
     if kind == "local":
         return _local(system, messages, on_text or (lambda t: None), keep_alive)
     if kind == "openai":
-        return _openai(system, messages, on_text or (lambda t: None), max_tokens)
-    return _cloud(system, messages, on_text or (lambda t: None), cache, max_tokens)
+        return _openai(system, messages, on_text or (lambda t: None), max_tokens,
+                       OPENAI_SCOUT_MODEL if scout else OPENAI_MODEL, None if scout else "medium")
+    return _cloud(system, messages, on_text or (lambda t: None), cache, max_tokens,
+                  CLAUDE_SCOUT_MODEL if scout else CLAUDE_MODEL, None if scout else "medium")
 
 
 # --------------------------------------------------------------------------
@@ -151,14 +159,14 @@ def _text(blocks):
 # Cloud: Claude
 # --------------------------------------------------------------------------
 
-def _cloud(system, messages, on_text, cache, max_tokens):
+def _cloud(system, messages, on_text, cache, max_tokens, model, effort):
     import anthropic
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
     # A big thread is a fixed prefix for every follow-up question: cache it,
     # and let the top-level marker cache the growing conversation too.
     sys_block = {"type": "text", "text": system}
-    extra = {}
+    extra = {"output_config": {"effort": effort}} if effort else {}
     if cache:
         sys_block["cache_control"] = {"type": "ephemeral"}
         extra["cache_control"] = {"type": "ephemeral"}
@@ -167,10 +175,9 @@ def _cloud(system, messages, on_text, cache, max_tokens):
         # classifier declines, fallbacks="default" re-runs the request on
         # Anthropic's recommended fallback model instead of failing.
         with client.beta.messages.stream(
-            model=CLAUDE_MODEL,
+            model=model,
             max_tokens=max_tokens,
             system=[sys_block],
-            output_config={"effort": "medium"},
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
             messages=messages,
@@ -184,9 +191,9 @@ def _cloud(system, messages, on_text, cache, max_tokens):
     except anthropic.AuthenticationError as e:
         raise RuntimeError("Claude rejected the API key (ANTHROPIC_API_KEY).") from e
     except anthropic.PermissionDeniedError as e:
-        raise RuntimeError(f"The API key can't use {CLAUDE_MODEL}: {e.message}") from e
+        raise RuntimeError(f"The API key can't use {model}: {e.message}") from e
     except anthropic.NotFoundError as e:
-        raise RuntimeError(f"Unknown Claude model {CLAUDE_MODEL}.") from e
+        raise RuntimeError(f"Unknown Claude model {model}.") from e
     except anthropic.RateLimitError as e:
         raise RuntimeError("Claude rate limit reached; try again in a minute.") from e
     except anthropic.BadRequestError as e:
@@ -210,7 +217,7 @@ def _cloud(system, messages, on_text, cache, max_tokens):
     u = message.usage
     usage = {"input": u.input_tokens, "output": u.output_tokens,
              "cache_write": u.cache_creation_input_tokens or 0, "cache_read": u.cache_read_input_tokens or 0}
-    rates = CLAUDE_RATES.get(message.model) or CLAUDE_RATES.get(CLAUDE_MODEL)
+    rates = CLAUDE_RATES.get(message.model) or CLAUDE_RATES.get(model)
     if rates:
         usage["cost_usd"] = round((usage["input"] * rates[0] + usage["output"] * rates[1]
                                    + usage["cache_write"] * rates[2] + usage["cache_read"] * rates[3]) / 1e6, 4)
@@ -223,7 +230,7 @@ def _cloud(system, messages, on_text, cache, max_tokens):
 # question about the same thread is cheaper without any extra setting.
 # --------------------------------------------------------------------------
 
-def _openai(system, messages, on_text, max_tokens):
+def _openai(system, messages, on_text, max_tokens, model, effort):
     import openai
 
     client = openai.OpenAI(api_key=OPENAI_KEY)
@@ -233,11 +240,11 @@ def _openai(system, messages, on_text, max_tokens):
     text, final = "", None
     try:
         stream = client.responses.create(
-            model=OPENAI_MODEL,
+            model=model,
             instructions=system,
             input=conversation,
             max_output_tokens=max_tokens,
-            reasoning={"effort": "medium"},
+            **({"reasoning": {"effort": effort}} if effort else {}),
             store=False,  # nothing kept on OpenAI's side beyond the request itself
             stream=True,
         )
@@ -255,9 +262,9 @@ def _openai(system, messages, on_text, max_tokens):
     except openai.AuthenticationError as e:
         raise RuntimeError("OpenAI rejected the API key (OPENAI_API_KEY).") from e
     except openai.PermissionDeniedError as e:
-        raise RuntimeError(f"The OpenAI key can't use {OPENAI_MODEL}: {e.message}") from e
+        raise RuntimeError(f"The OpenAI key can't use {model}: {e.message}") from e
     except openai.NotFoundError as e:
-        raise RuntimeError(f"Unknown OpenAI model {OPENAI_MODEL}.") from e
+        raise RuntimeError(f"Unknown OpenAI model {model}.") from e
     except openai.RateLimitError as e:
         raise RuntimeError("OpenAI rate limit or quota reached; try again later or check billing.") from e
     except openai.BadRequestError as e:
@@ -282,8 +289,8 @@ def _openai(system, messages, on_text, max_tokens):
         if cached:
             usage["cached"] = cached
             usage["cost_is_max"] = True  # priced as if uncached: the real charge is lower
-        model = getattr(final, "model", "") or OPENAI_MODEL
-        rates = next((r for name, r in OPENAI_RATES.items() if model.startswith(name)), None) or OPENAI_RATES.get(OPENAI_MODEL)
+        used = getattr(final, "model", "") or model
+        rates = next((r for name, r in OPENAI_RATES.items() if used.startswith(name)), None) or OPENAI_RATES.get(model)
         if rates:
             usage["cost_usd"] = round((u.input_tokens * rates[0] + u.output_tokens * rates[1]) / 1e6, 4)
-    return text, usage, getattr(final, "model", None) or OPENAI_MODEL, None
+    return text, usage, getattr(final, "model", None) or model, None

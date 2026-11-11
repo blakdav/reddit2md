@@ -40,7 +40,7 @@ Saved threads are deleted automatically once they are older than the auto-delete
 
 ## AI summaries, questions and search
 
-Optional: a local model through your Ollama server, Claude, OpenAI, or any mix. Set `OLLAMA_URL`/`OLLAMA_MODEL`, `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in `docker-compose.yml`; options whose settings are left as placeholders are hidden. Each summary and question lets you pick which one to use.
+Optional: a local model through your Ollama server, Claude, OpenAI, or any mix. Set `OLLAMA_URL`/`OLLAMA_MODEL`, `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in `docker-compose.yml`; options whose settings are left as placeholders are hidden. Each summary and question lets you pick which one to use. Questions about big threads (over ~30K tokens) are **Focused** by default: a cheap scout model reads the whole thread and picks the comments that bear on the question, then the main model answers from those plus the thread's summary, at roughly 1/7 the cost. Pick **Whole thread** next to the Ask button to send everything instead.
 
 - **Summary** (**AI** button in the reader → *Summary*): TL;DR, the main viewpoints and how well supported they are, what OP added, useful details, and notable comments. Saved with the thread. After an **Update** it shows how many comments were added since, with a **Redo** button. Claude and OpenAI read the whole thread at once; the local model reads big threads in parts and merges its notes.
 - **Ask** (*Ask* tab): questions about the open thread. Follow-ups keep the conversation. With the local model, a thread too long for its context is answered from the comments that best match the question (the answer says so).
@@ -143,6 +143,8 @@ The pill in the header shows the login state (green with your username, red when
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Claude model |
 | `OPENAI_API_KEY` | (none) | OpenAI API key for OpenAI summaries and questions |
 | `OPENAI_MODEL` | `gpt-6-astra` | OpenAI model (`gpt-6.1-sol` is about 1/5 the price) |
+| `OPENAI_SCOUT_MODEL` | `gpt-6-luna` | Cheap OpenAI model that picks the relevant comments for Focused questions |
+| `CLAUDE_SCOUT_MODEL` | `claude-haiku-5-5` | Cheap Claude model that picks the relevant comments for Focused questions |
 | `AUTO_SUMMARY` | (off) | First-run default for Auto-summarize: `local`, `cloud` (Claude) or `openai` |
 | `GPU_LOCK_FILE` | (none) | Lock file shared with Vidscribe, e.g. `/gpu/lock` |
 | `RETENTION_DAYS` | `30` | Initial auto-delete days, until changed in Settings |

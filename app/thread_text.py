@@ -80,3 +80,43 @@ def chunks(data, tz, max_chars):
     if cur:
         parts.append(cur)
     return parts
+
+
+def focused(data, ids, tz, max_chars, context_chars=400):
+    """Only the comments in `ids` (in thread order), each under the chain of comments it replies to.
+    Those parent comments are context, so they're shortened to context_chars. Picked comments are
+    added in thread order until max_chars; returns (text, picked comments included, picked comments left out)."""
+    tzi = ZoneInfo(tz or "UTC")
+    op = data["post"].get("author")
+    op = op if op and op != "[deleted]" else None
+    want = {i.lower() for i in ids}
+    parent_of, order = {}, []
+    for n, depth, pid in walk(data.get("comments") or []):
+        parent_of[n.get("id")] = pid
+        order.append((n, depth))
+    keep, total, cut = set(), 0, 0
+    for n, depth in order:
+        if (n.get("id") or "").lower() not in want:
+            continue
+        size = len(comment_line(n, depth, op, tzi)) + 2
+        if total + size > max_chars:
+            cut += 1
+            continue
+        total += size
+        keep.add(n["id"])
+    picked = set(keep)
+    for cid in list(picked):
+        pid = parent_of.get(cid)
+        while pid and pid not in keep:
+            keep.add(pid)
+            pid = parent_of.get(pid)
+    out = []
+    for n, depth in order:
+        if n.get("id") not in keep:
+            continue
+        if n["id"] not in picked:
+            body = (n.get("body") or "").strip()
+            if len(body) > context_chars:
+                n = {**n, "body": body[:context_chars].rstrip() + " […]"}
+        out.append(comment_line(n, depth, op, tzi))
+    return "\n\n".join(out), len(picked), cut

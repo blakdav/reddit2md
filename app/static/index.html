@@ -372,6 +372,10 @@
               <textarea id="askQ" placeholder="Ask about this thread. Answers link to the comments they use."></textarea>
               <div class="row">
                 <select id="askKind"></select>
+                <select id="askScope" title="Focused: a cheap model first picks the comments that matter, then the main model answers from those (big threads only; much cheaper). Whole thread: the main model reads everything.">
+                  <option value="focused">Focused</option>
+                  <option value="whole">Whole thread</option>
+                </select>
                 <button type="button" id="askClear">Clear</button>
                 <button type="submit" class="primary" id="askGo">Ask</button>
               </div>
@@ -1060,6 +1064,7 @@ async function loadAIInfo() {
   $("aiBtn").hidden = !any;
   $("fAsk").hidden = !any;
   fillKinds($("askKind")); fillKinds($("allKind"));
+  syncScope();
 }
 
 const fmtTokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n);
@@ -1073,6 +1078,8 @@ function usageLine(e) {
   const tin = (u.input || 0) + (u.cache_write || 0) + (u.cache_read || 0), tout = u.output || 0;
   if (tin || tout) parts.push(`${fmtTokens(tin + tout)} tokens (${fmtTokens(tin)} in`
     + (u.cached ? `, ${fmtTokens(u.cached)} of it cached` : "") + ` / ${fmtTokens(tout)} out)`);
+  if (u.scout) parts.push(`+ ${u.scout.model || "scout"} ${fmtTokens((u.scout.input || 0) + (u.scout.output || 0))} tokens`
+    + ` → ${u.scout.picked} comments`);
   if (u.cost_usd != null) parts.push(`${u.cost_is_max ? "at most " : ""}$${u.cost_usd.toFixed(u.cost_usd < 0.1 ? 3 : 2)}`);
   if (u.parts) parts.push(`read in ${u.parts} parts`);
   if (e.created) parts.push(fmtDate(e.created));
@@ -1236,11 +1243,21 @@ $("askForm").addEventListener("submit", async (e) => {
   const q = $("askQ").value.trim();
   if (!q || !current) return;
   try {
-    await postJSON(`/api/threads/${encodeURIComponent(current.id)}/chat`, {kind: $("askKind").value, question: q});
+    await postJSON(`/api/threads/${encodeURIComponent(current.id)}/chat`,
+                   {kind: $("askKind").value, question: q, whole: $("askScope").value === "whole"});
     $("askQ").value = "";
   } catch (err) { toast(err.message, true); }
   loadAI();
 });
+// Focused/Whole only applies to Claude and OpenAI; remembered per browser.
+try { $("askScope").value = localStorage.getItem("r2m-scope") || "focused"; } catch {}
+function syncScope() {
+  const k = $("askKind").value, info = aiInfo[k] || {};
+  $("askScope").hidden = k === "local" || !info.scout;
+  $("askScope").options[0].textContent = info.scout ? `Focused (${info.scout} picks comments)` : "Focused";
+}
+$("askScope").addEventListener("change", () => { try { localStorage.setItem("r2m-scope", $("askScope").value); } catch {} });
+$("askKind").addEventListener("change", syncScope);
 $("askQ").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !mobile()) { e.preventDefault(); $("askForm").requestSubmit(); } });
 $("askClear").addEventListener("click", async () => {
   if (!current || !confirm("Clear the questions and answers for this thread?")) return;

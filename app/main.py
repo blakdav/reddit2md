@@ -282,7 +282,7 @@ def summary_delete(tid, kind):
 def _ask(key):
     body = request.get_json(silent=True) or {}
     try:
-        ai.RUNNER.ask(key, body.get("kind"), body.get("question"))
+        ai.RUNNER.ask(key, body.get("kind"), body.get("question"), whole=bool(body.get("whole")))
     except (ValueError, LookupError) as e:
         return _ai_error(e)
     return jsonify(ok=True)

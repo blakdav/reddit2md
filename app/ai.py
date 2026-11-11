@@ -19,6 +19,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import gpulock
 import llm
@@ -44,6 +45,14 @@ GPU = gpulock.GpuLock("reddit2md")
 CLOUD_THREAD_CHARS = 2_500_000
 CLOUD_ALL_CHARS = 200_000
 CONVERSATION_CHARS = 12_000  # room kept for earlier questions in local chat
+
+# Focused answers (Claude and OpenAI, big threads): a cheap scout model reads the whole thread
+# in parts and lists the comments that bear on the question; the main model answers from those
+# plus the thread's summary. About 1/7 the cost of sending everything to the main model.
+FOCUS_MIN_CHARS = 100_000   # ~30K tokens: smaller threads are always sent whole
+SCOUT_PART_CHARS = 200_000  # ~57K tokens per scout request; parts run in parallel
+SCOUT_WORKERS = 4
+FOCUS_MAX_CHARS = 80_000    # ~23K tokens of picked comments for the main model
 
 SUMMARY_SYSTEM = """You summarize Reddit threads that the user saved. The text has the post, then every
 comment with its author, score (upvotes minus downvotes) and a reference like [c:k3x9a].
@@ -96,6 +105,25 @@ PARTIAL_NOTE = """
 Note: this thread is too long for the model, so only the comments that best match the user's latest
 question are included below, each with the comment it replies to. Say so if the answer might be in
 comments you can't see."""
+
+SCOUT_SYSTEM = """You help answer a question about a long Reddit thread by finding the comments that matter.
+You see the post and one part of the comments. Each comment starts with a reference like [c:k3x9a];
+replies are indented under the comment they answer.
+
+List the reference of every comment in this part that helps answer the question: direct answers,
+first-hand experiences, facts, numbers, advice, and replies that confirm or dispute them. Comments may
+describe the same thing in different words than the question; include those. Leave out comments that are
+clearly off-topic. If earlier questions are given, the latest question may refer back to them.
+
+Reply with only the references, comma-separated, like: c:k3x9a, c:m2p8q
+If nothing in this part is relevant, reply: NONE"""
+
+FOCUS_NOTE = """
+
+Note: this thread is long, so a quick first pass picked out the comments that bear on the user's latest
+question, and only those are included below, each under the comments it replies to (those are shown for
+context and may be shortened). A summary of the whole thread comes first when one exists; use it for
+questions about the thread as a whole. Say so if the answer might depend on comments that aren't shown."""
 
 ALL_SYSTEM = """You answer questions across many Reddit threads the user saved. Each question comes with
 excerpts: the comments from the saved threads that best match it (found by keyword search), grouped by
@@ -304,7 +332,7 @@ class Runner:
 
     # ------------------------------------------------------------------ chat (one thread or all)
 
-    def ask(self, key, kind, question):
+    def ask(self, key, kind, question, whole=False):
         question = (question or "").strip()[:8000]
         if not question:
             raise ValueError("Type a question")
@@ -314,25 +342,34 @@ class Runner:
             raise ValueError("Still answering the previous question")
         _update(key, lambda d: d.setdefault("chat", []).append({"role": "user", "text": question, "created": now()}))
         try:
-            self._start(key, "chat", kind, self._answer, key, kind)
+            self._start(key, "chat", kind, self._answer, key, kind, bool(whole))
         except Exception:
             _update(key, lambda d: d["chat"].pop())
             raise
 
-    def _answer(self, run, key, kind):
+    def _answer(self, run, key, kind, whole=False):
         started = now()
         chat = stored(key).get("chat", [])
         question = chat[-1]["text"]
         pairs = _pairs(chat[:-1])
         entry = {"role": "assistant", "kind": kind}
+        scout = None
         try:
             if key == ALL:
                 system, messages, refs, note = self._all_prompt(kind, question, pairs)
             else:
-                system, messages, refs, note = self._thread_prompt(key, kind, question, pairs)
+                system, messages, refs, note, scout = self._thread_prompt(run, key, kind, question, pairs, whole)
             run["refs"] = refs
+            run["stage"] = "Thinking"
+            # A focused prompt changes with every question, so caching it would only add Claude's cache-write cost.
             text, usage, model, blocks = llm.ask(kind, system, messages, on_text=lambda t: run.update(text=t),
-                                                 keep_alive="10m", cache=(key != ALL), max_tokens=32000)
+                                                 keep_alive="10m", cache=(key != ALL and not scout), max_tokens=32000)
+            if scout:
+                usage = dict(usage, scout=scout)
+                if usage.get("cost_usd") is not None and scout.get("cost_usd") is not None:
+                    usage["cost_usd"] = round(usage["cost_usd"] + scout["cost_usd"], 4)
+                if scout.get("cost_is_max"):
+                    usage["cost_is_max"] = True
             entry.update(text=text, model=model, usage=usage, elapsed=round(now() - started, 1), refs=refs)
             if note:
                 entry["note"] = note
@@ -345,13 +382,22 @@ class Runner:
         if key == ALL or storage.get(key):
             _update(key, lambda d: d.setdefault("chat", []).append(entry))
 
-    def _thread_prompt(self, tid, kind, question, pairs):
+    def _thread_prompt(self, run, tid, kind, question, pairs, whole=False):
         data = storage.get(tid)
         tz = settings.load()["timezone"]
         full = thread_text.full(data, tz)
         budget = CLOUD_THREAD_CHARS if kind != "local" else llm.local_chars() - CONVERSATION_CHARS
-        note = None
-        if len(full) + len(THREAD_CHAT_SYSTEM) <= budget:
+        note = scout = None
+        focused = None
+        if kind != "local" and not whole and len(full) > FOCUS_MIN_CHARS:
+            try:
+                focused = self._focus(run, tid, data, kind, question, pairs, tz)
+            except Exception as e:
+                log.warning("Scout pass for %s failed, sending the whole thread: %s", tid, e)
+                note = f"The quick first pass failed ({e}), so the whole thread was sent."
+        if focused:
+            system, note, scout = focused
+        elif len(full) + len(THREAD_CHAT_SYSTEM) <= budget:
             system = f"{THREAD_CHAT_SYSTEM}\n\n<thread>\n{full}\n</thread>"
         else:
             head = thread_text.header(data, tz)
@@ -369,7 +415,53 @@ class Runner:
             messages.append({"role": "assistant", "content": a.get("blocks") if kind == "cloud" and a.get("blocks")
                              and a.get("kind") == "cloud" else a["text"]})
         messages.append({"role": "user", "content": question})
-        return system, messages, None, note
+        return system, messages, None, note, scout
+
+    def _focus(self, run, tid, data, kind, question, pairs, tz):
+        """Scout pass: returns (system prompt with the picked comments, note, scout usage)."""
+        head = thread_text.header(data, tz)
+        parts = thread_text.chunks(data, tz, SCOUT_PART_CHARS)
+        earlier = "\n".join(f"- {q['text'][:500]}" for q, _ in pairs[-3:])
+        ask_text = (f"Earlier questions in this conversation:\n{earlier}\n\n" if earlier else "") \
+            + f"Question: {question}"
+        run["stage"] = f"Finding the relevant comments ({len(parts)} part{'s' if len(parts) != 1 else ''})"
+
+        def one(item):
+            i, part = item
+            msg = f"{head}\n\nComments, part {i} of {len(parts)}:\n\n{part}\n\n{ask_text}"
+            return llm.ask(kind, SCOUT_SYSTEM, [{"role": "user", "content": msg}], scout=True, max_tokens=16000)
+
+        with ThreadPoolExecutor(max_workers=SCOUT_WORKERS) as pool:
+            results = list(pool.map(one, enumerate(parts, 1)))
+
+        ids = []
+        for text, _, _, _ in results:
+            ids += re.findall(r"c:([a-z0-9]+)", text, re.I)
+        usage = {"model": results[0][2] if results else None, "parts": len(parts), "input": 0, "output": 0}
+        costs = [u.get("cost_usd") for _, u, _, _ in results]
+        for _, u, _, _ in results:
+            usage["input"] += u.get("input") or 0
+            usage["output"] += u.get("output") or 0
+            usage["cached"] = usage.get("cached", 0) + (u.get("cached") or 0)
+            if u.get("cost_is_max"):
+                usage["cost_is_max"] = True
+        if costs and all(c is not None for c in costs):
+            usage["cost_usd"] = round(sum(costs), 4)
+
+        excerpt, picked, cut = thread_text.focused(data, ids, tz, FOCUS_MAX_CHARS)
+        usage["picked"] = picked
+        summaries = stored(tid).get("summaries", {})
+        summary = next((summaries[k]["text"] for k in (kind, *llm.KINDS)
+                        if (summaries.get(k) or {}).get("text")), None)
+        system = f"{THREAD_CHAT_SYSTEM}{FOCUS_NOTE}\n\n<thread>\n{head}"
+        if summary:
+            system += f"\n\n<summary of the whole thread>\n{summary}\n</summary of the whole thread>"
+        system += ("\n\nComments picked for this question:\n\n" + excerpt if picked
+                   else "\n\n(The first pass found no comments about this question.)") + "\n</thread>"
+        note = (f"Focused: {usage['model']} read all {data.get('count')} comments and picked {picked}"
+                + (f" ({cut} more left out for length)" if cut else "")
+                + (", plus the thread summary" if summary else "") + ". Pick \"Whole thread\" to send everything.")
+        return system, note, usage
 
     def _all_prompt(self, kind, question, pairs):
         budget = CLOUD_ALL_CHARS if kind != "local" else llm.local_chars() - CONVERSATION_CHARS - len(ALL_SYSTEM)
