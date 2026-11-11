@@ -60,7 +60,9 @@ def _cached_id(url):
 def _auto_summary(tid, stats):
     """Queue a summary after a new thread, or after an Update that brought new comments."""
     kind = settings.load()["auto_summary"]
-    if not kind or not llm.available()[kind]["enabled"] or (stats and not stats.get("new")):
+    if kind != "local":  # paid models never run on their own, whatever an old settings file says
+        return
+    if not llm.available()[kind]["enabled"] or (stats and not stats.get("new")):
         return
     try:
         ai.RUNNER.summarize(tid, kind)

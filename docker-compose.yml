@@ -33,7 +33,7 @@ services:
       # - OPENAI_MODEL=gpt-6-astra   # gpt-6.1-sol is about 1/5 the price
       # - OPENAI_SCOUT_MODEL=gpt-6-luna       # cheap model that picks comments for Focused questions
       # - CLAUDE_SCOUT_MODEL=claude-haiku-5-5
-      # - AUTO_SUMMARY=local     # first-run default for Settings > Auto-summarize: local, cloud (Claude) or openai
+      # - AUTO_SUMMARY=local     # first-run default for Settings > Auto-summarize (local only; paid models never run automatically)
       # - GPU_LOCK_FILE=/gpu/lock   # with the shared folder above
     shm_size: "512mb"
     # Lets OLLAMA_URL=http://host.docker.internal:11434 reach an Ollama on this same host.

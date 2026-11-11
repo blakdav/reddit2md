@@ -145,7 +145,7 @@ The pill in the header shows the login state (green with your username, red when
 | `OPENAI_MODEL` | `gpt-6-astra` | OpenAI model (`gpt-6.1-sol` is about 1/5 the price) |
 | `OPENAI_SCOUT_MODEL` | `gpt-6-luna` | Cheap OpenAI model that picks the relevant comments for Focused questions |
 | `CLAUDE_SCOUT_MODEL` | `claude-haiku-5-5` | Cheap Claude model that picks the relevant comments for Focused questions |
-| `AUTO_SUMMARY` | (off) | First-run default for Auto-summarize: `local`, `cloud` (Claude) or `openai` |
+| `AUTO_SUMMARY` | (off) | First-run default for Auto-summarize: `local` or off. Claude and OpenAI never run automatically, only when clicked |
 | `GPU_LOCK_FILE` | (none) | Lock file shared with Vidscribe, e.g. `/gpu/lock` |
 | `RETENTION_DAYS` | `30` | Initial auto-delete days, until changed in Settings |
 | `TZ` | `UTC` | Initial display time zone, until changed in Settings |

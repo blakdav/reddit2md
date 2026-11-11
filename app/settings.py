@@ -22,8 +22,9 @@ DEFAULTS = {
     "retention_days": int(float(os.environ.get("RETENTION_DAYS", "30"))),
     "timezone": _default_tz(),
     # Summarize threads automatically after converting, and after an Update
-    # that found new comments: "" (off), "local", "cloud" (Claude) or "openai".
-    "auto_summary": os.environ.get("AUTO_SUMMARY", "").strip() if os.environ.get("AUTO_SUMMARY", "").strip() in ("local", "cloud", "openai") else "",
+    # that found new comments: "" (off) or "local". Paid models (Claude, OpenAI)
+    # only ever run when clicked, so nothing costs money without asking.
+    "auto_summary": "local" if os.environ.get("AUTO_SUMMARY", "").strip() == "local" else "",
 }
 
 
@@ -38,6 +39,8 @@ def load():
             data.update({k: v for k, v in json.load(f).items() if k in DEFAULTS})
     except (FileNotFoundError, ValueError):
         pass
+    if data["auto_summary"] != "local":  # older versions allowed paid models here
+        data["auto_summary"] = ""
     return data
 
 
@@ -58,8 +61,8 @@ def save(updates):
         data["timezone"] = tz
     if "auto_summary" in updates:
         v = updates["auto_summary"] or ""
-        if v not in ("", "local", "cloud", "openai"):
-            raise ValueError("Auto-summarize must be off, local, cloud or openai")
+        if v not in ("", "local"):
+            raise ValueError("Auto-summarize can only be off or local AI; Claude and OpenAI only run when clicked")
         data["auto_summary"] = v
     with _lock:
         tmp = SETTINGS_FILE + ".tmp"

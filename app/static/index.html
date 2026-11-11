@@ -440,7 +440,7 @@
           <label for="autoSum">Auto-summarize</label>
           <div class="row">
             <select id="autoSum"><option value="">Off</option></select>
-            <span class="hint">after converting a thread, and after an Update that finds new comments.</span>
+            <span class="hint">after converting a thread, and after an Update that finds new comments. Local AI only: Claude and OpenAI never run unless you click them.</span>
           </div>
         </div>
         <div class="row">
@@ -995,8 +995,9 @@ async function loadSettings() {
   $("retDays").value = j.settings.retention_days;
   const auto = $("autoSum");
   auto.replaceChildren(new Option("Off", ""));
-  for (const k of ["local", "cloud", "openai"]) if (aiInfo[k].enabled || j.settings.auto_summary === k) auto.append(new Option(`${KIND_NAME[k]} (${aiInfo[k].model || "not set up"})`, k));
-  auto.value = j.settings.auto_summary || "";
+  // Only the local model can run automatically; Claude and OpenAI cost money and only run when clicked.
+  if (aiInfo.local.enabled) auto.append(new Option(`${KIND_NAME.local} (${aiInfo.local.model})`, "local"));
+  auto.value = j.settings.auto_summary === "local" ? "local" : "";
   $("autoField").hidden = auto.options.length < 2;
   $("setmsg").textContent = "";
 }
@@ -1187,8 +1188,12 @@ function renderSummary(sums) {
     const e = sums[k];
     const b = document.createElement("button");
     b.type = "button";
-    b.className = e && e.text ? "" : "primary";
-    b.textContent = e && e.running ? `${KIND_NAME[k]}: working...` : (e && e.text ? `Redo with ${KIND_NAME[k]}` : `Summarize with ${KIND_NAME[k]}`);
+    // Only the free local model gets the highlighted button; paid ones are plain and labelled.
+    const paid = k !== "local";
+    b.className = (e && e.text) || paid ? "" : "primary";
+    b.textContent = (e && e.running ? `${KIND_NAME[k]}: working...` : (e && e.text ? `Redo with ${KIND_NAME[k]}` : `Summarize with ${KIND_NAME[k]}`))
+      + (paid && !(e && e.running) ? " · paid" : "");
+    if (paid) b.title = `Sends the whole thread to ${aiInfo[k].model}; billed to your API account. Only runs when you click.`;
     b.disabled = !!(e && e.running);
     b.addEventListener("click", () => startSummary(k));
     btns.append(b);
@@ -1209,8 +1214,8 @@ function renderSummary(sums) {
   const e = sumKind && sums[sumKind];
   if (!e) {
     const h = document.createElement("div"); h.className = "fhint";
-    h.textContent = "No summary yet. Claude and OpenAI read the whole thread at once (a few cents for most threads); "
-      + "local AI is free but reads big threads in parts.";
+    h.textContent = "No summary yet. Local AI is free (and is what auto-summarize uses); it reads big threads in parts. "
+      + "Claude and OpenAI are paid, read the whole thread at once, and only run when you click them.";
     box.append(h); return;
   }
   if (e.running) {
