@@ -287,22 +287,58 @@ POST_JS = """
 """
 
 
+LINK_TRIES = 3  # clicks per "load more" link before giving up on it
+
+
 def _expand_all(page, progress, counter):
-    rounds = 0
+    """Click every "load more comments" link.
+
+    A failed click (usually Reddit rate limiting) leaves the link on the page. Instead of
+    clicking it again every second, back off and retry; skip a link after LINK_TRIES so
+    one dead link can't burn the whole request budget.
+    """
+    rounds = stalls = skipped = 0
     while rounds < MAX_REQUESTS:
         _check_deadline(counter)
-        links = page.locator(".thing.morechildren .morecomments a:visible")
+        links = page.locator(".thing.morechildren .morecomments a:visible:not([data-r2m-skip])")
         n = links.count()
         if n == 0:
-            return
+            break
         rounds += 1
         progress(f"Clicking 'load more comments' ({n} remaining links, round {rounds})")
+        link = links.first
         try:
-            links.first.click(timeout=10000)
-            page.wait_for_load_state("networkidle", timeout=30000)
+            handle = link.element_handle(timeout=10000)
+            handle.click(timeout=10000)
         except Exception as e:
             log.info("load-more click issue: %s", e)
-        time.sleep(DELAY)
+            handle = None
+        loaded = False
+        if handle:
+            # On success old.reddit replaces the whole "more" stub, removing the link.
+            try:
+                page.wait_for_function("e => !e.isConnected || !e.closest('.thing.morechildren')",
+                                       arg=handle, timeout=15000)
+                loaded = True
+            except Exception:
+                pass
+        if loaded:
+            stalls = 0
+            time.sleep(DELAY)
+            continue
+        stalls += 1
+        if handle:
+            tries = handle.evaluate(
+                "(e, max) => { const t = +(e.dataset.r2mTries || 0) + 1; e.dataset.r2mTries = t;"
+                " if (t >= max) e.dataset.r2mSkip = '1'; return t; }", LINK_TRIES)
+            if tries >= LINK_TRIES:
+                skipped += 1
+                log.info("Skipping a 'load more' link after %d failed clicks", tries)
+        wait = min(60, DELAY * 2 ** stalls)
+        progress(f"'Load more' didn't load (Reddit may be rate limiting); waiting {wait:.0f}s")
+        time.sleep(wait)
+    if skipped:
+        progress(f"Gave up on {skipped} 'load more' link(s); some comments may be missing")
 
 
 def _to_nodes(items):
