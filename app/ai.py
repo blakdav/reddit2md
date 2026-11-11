@@ -369,7 +369,11 @@ class Runner:
             run["stage"] = f"Reading part {i} of {len(parts)}"
             note, usage, _, _ = llm.ask("local", CHUNK_SYSTEM,
                                         [{"role": "user", "content": f"{head}\n\nComments, part {i} of {len(parts)}:\n\n{part}"}],
-                                        on_text=lambda t: _check(run))
+                                        on_text=lambda t: _check(run),
+                                        # Stay loaded for the next part; unloading and reloading 14 GB per
+                                        # part is slow and once left Ollama stuck at "Stopping...".
+                                        # The final merge below unloads it (keep_alive 0).
+                                        keep_alive="5m")
             notes.append(f"### Part {i}\n{note}")
             tin += usage.get("input") or 0
             tout += usage.get("output") or 0
