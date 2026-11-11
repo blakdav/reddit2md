@@ -581,6 +581,15 @@ document.addEventListener("click", (e) => {  // also covers AI answers, which us
 });
 $("vRaw").addEventListener("click", () => setView("raw"));
 
+// Fetch found clearly fewer comments than Reddit's count (beyond normal invisible removals).
+function shortTag(t) {
+  const p = document.createElement("span");
+  p.className = "ptag"; p.textContent = `Short ~${t.short}`;
+  p.title = `The last fetch found ${t.fetched} comments but Reddit counts ${t.expected}. Removed comments explain a few `
+    + "percent; this gap is bigger, so some were probably missed. Try Update.";
+  return p;
+}
+
 // ------------------------------------------------------------ open a saved thread
 async function openThread(id) {
   if (!current || current.id !== id) newOnly = false;
@@ -599,7 +608,10 @@ async function openThread(id) {
     p.className = "ptag"; p.textContent = "Partial";
     p.title = `Partial download: ${current.partial}. Click Update to fetch the rest.`;
     $("meta").append(" ", p);
+  } else if (current.short) {
+    $("meta").append(" ", shortTag(current));
   }
+  if (current.expected) $("meta").append(` · Reddit counts ${current.expected}`);
   const n = current.new_count || 0;
   $("newOnly").textContent = n ? `New only (${n})` : "New only";
   $("newOnly").disabled = !n;
@@ -848,6 +860,8 @@ function renderList() {
       const p = document.createElement("span");
       p.className = "ptag"; p.textContent = "Partial"; p.title = `Partial download: ${t.partial}. Update to fetch the rest.`;
       m.append(p);
+    } else if (t.short) {
+      m.append(shortTag(t));
     }
     info.append(title, m);
 

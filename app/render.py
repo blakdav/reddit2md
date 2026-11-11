@@ -139,6 +139,9 @@ def render(data, scores=True, tz="UTC", web=False, new_only=False, order="saved"
     if data.get("partial"):
         got = f"{data['count']} of about {data['expected']}" if data.get("expected") else str(data["count"])
         lines += [f"> **Partial download:** {got} comments captured. {data['partial']}.", ""]
+    elif data.get("short"):
+        lines += [f"> **Possibly incomplete:** the last fetch found {data['fetched']} comments; Reddit counts "
+                  f"{data['expected']} (about {data['short']} more than normal removals explain).", ""]
     lines.append(f"Source: {post['permalink']}")
     if post.get("url"):
         lines.append(f"Link: {post['url']}")

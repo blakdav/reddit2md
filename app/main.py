@@ -92,6 +92,14 @@ def _run(job, progress, cancelled, stats):
     if result.get("partial"):
         fields["partial"] = True
         fields["warning"] = f"Partial: {result['partial']}. Run Update later to fetch the rest."
+    else:
+        expected = result["post"].get("num_comments")
+        short = storage.shortfall(expected, result["count"])
+        if short:
+            log.warning("Thread %s: found %d comments but Reddit counts %d (%d short)",
+                        result["id"], result["count"], expected, short)
+            fields["warning"] = (f"Found {result['count']} comments but Reddit counts {expected}: about {short} "
+                                 "missing. Some may be removed comments nobody can see; check the log.")
     return fields
 
 

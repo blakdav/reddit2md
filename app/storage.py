@@ -20,7 +20,19 @@ ID_RE = re.compile(r"^[a-z0-9]{1,16}$")
 _lock = threading.Lock()
 
 META_KEYS = ("id", "title", "subreddit", "author", "permalink", "created", "saved_at", "first_saved", "prev_fetch",
-             "count", "expected", "sort", "mode", "new_count", "kept_deleted", "partial")
+             "count", "expected", "fetched", "short", "sort", "mode", "new_count", "kept_deleted", "partial")
+
+# Reddit's comment count includes removed and spam-filtered comments that nobody can see, so a
+# complete fetch normally comes up a little short. A bigger gap means comments were missed.
+SHORT_MIN, SHORT_PCT = 20, 0.03
+
+
+def shortfall(expected, fetched):
+    """How many comments this fetch is missing compared with Reddit's count, or None if within normal range."""
+    if not expected or fetched is None:
+        return None
+    gap = expected - fetched
+    return gap if gap > max(SHORT_MIN, expected * SHORT_PCT) else None
 
 
 def _path(tid):
@@ -91,6 +103,8 @@ def save(result, source_url=None):
         "author": post.get("author"), "permalink": post.get("permalink"), "created": post.get("created"),
         "saved_at": now, "first_saved": first_saved, "prev_fetch": prev_fetch,
         "count": count, "expected": post.get("num_comments"),
+        # What this fetch itself found (count also includes saved comments since deleted on Reddit).
+        "fetched": result["count"], "short": shortfall(post.get("num_comments"), result["count"]),
         "sort": result.get("sort"), "mode": result.get("mode"),
         "new_count": stats["new"] if stats else 0,
         "kept_deleted": _kept(comments),
