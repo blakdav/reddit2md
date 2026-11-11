@@ -73,6 +73,11 @@
   .qhead { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12px; color: var(--muted);
            text-transform: uppercase; letter-spacing: .04em; position: sticky; top: 0; background: var(--bg); }
   .qhead span { margin-right: auto; }
+  .qhead { cursor: pointer; user-select: none; }
+  .qhead:hover { color: var(--text); }
+  .qhead .qarrow { margin-right: 0; width: 10px; display: inline-block; transition: transform .15s; }
+  #queue.open .qhead .qarrow { transform: rotate(90deg); }
+  #queue:not(.open) #qlist, #queue:not(.open) #qclear { display: none; }
   .qhead button { font-size: 12px; padding: 2px 8px; text-transform: none; letter-spacing: 0; }
   .job { display: flex; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border); font-size: 13px; cursor: pointer; }
   .job:hover { background: var(--raised); }
@@ -280,7 +285,7 @@
       <input type="search" id="filter" placeholder="Filter saved threads (Enter searches comments)">
     </div>
     <div id="queue" hidden>
-      <div class="qhead"><span id="qtitle">Queue</span><button type="button" id="qclear" title="Remove finished jobs from the list">Clear finished</button></div>
+      <div class="qhead" id="qhead" title="Show or hide the queue"><span class="qarrow">&#9656;</span><span id="qtitle">Queue</span><button type="button" id="qclear" title="Remove finished jobs from the list">Clear finished</button></div>
       <div id="qlist"></div>
     </div>
     <div id="list"></div>
@@ -707,7 +712,11 @@ async function loadQueue() {
 function renderQueue(list) {
   $("queue").hidden = !list.length;
   const active = list.filter(j => j.status === "queued" || j.status === "running").length;
-  $("qtitle").textContent = active ? `Queue · ${active} active` : "Queue";
+  // Collapsed, the header alone says what's going on.
+  const failed = list.filter(j => j.status === "error").length, warned = list.filter(j => j.warning).length;
+  $("qtitle").textContent = ["Queue", active && `${active} active`, failed && `${failed} failed`,
+                             warned && plural(warned, "warning"), !active && !failed && !warned && `${list.length} done`]
+    .filter(Boolean).join(" · ");
   $("qclear").hidden = active === list.length;
   // Newest first, like the saved list; active jobs first of all.
   const order = j => (j.status === "running" ? 0 : j.status === "queued" ? 1 : 2);
@@ -772,7 +781,10 @@ function renderQueue(list) {
     box.append(row);
   }
 }
-$("qclear").addEventListener("click", async () => { await fetch("/api/queue/clear", {method: "POST"}); loadQueue(); });
+// Collapsed on every page load; the header toggles it.
+$("qhead").addEventListener("click", () => $("queue").classList.toggle("open"));
+$("qclear").addEventListener("click", async (e) => {
+  e.stopPropagation(); await fetch("/api/queue/clear", {method: "POST"}); loadQueue(); });
 
 $("form").addEventListener("submit", (e) => { e.preventDefault(); convert($("url").value.trim(), false); });
 $("refresh").addEventListener("click", () => current && convert(current.permalink, true));
