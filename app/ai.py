@@ -390,11 +390,13 @@ class Runner:
         note = scout = None
         focused = None
         if kind != "local" and not whole and len(full) > FOCUS_MIN_CHARS:
+            # If the scout fails, stop: never fall back to the much pricier whole-thread request on its own.
             try:
                 focused = self._focus(run, tid, data, kind, question, pairs, tz)
             except Exception as e:
-                log.warning("Scout pass for %s failed, sending the whole thread: %s", tid, e)
-                note = f"The quick first pass failed ({e}), so the whole thread was sent."
+                log.warning("Scout pass for %s failed: %s", tid, e)
+                raise RuntimeError(f"The first pass that picks comments failed ({e}). Nothing was sent to the "
+                                   "main model. Ask again, or choose Whole thread to send everything.") from e
         if focused:
             system, note, scout = focused
         elif len(full) + len(THREAD_CHAT_SYSTEM) <= budget:
