@@ -128,6 +128,12 @@
   #rendered h2 { font-size: 16px; margin: 22px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   #rendered p { margin: 6px 0; }
   #rendered a { color: var(--link); word-break: break-word; }
+  /* Label via CSS so Copy (innerText) never picks up the button text */
+  .imgbtn { font-size: 12px; padding: 1px 8px; margin-left: 4px; border-radius: 999px; vertical-align: 1px; }
+  .imgbtn::before { content: "\1F5BC  Show image"; }
+  .imgbtn.on::before { content: "Hide image"; }
+  .cimg { display: block; max-width: 100%; max-height: 75vh; margin: 8px 0; border-radius: 6px; border: 1px solid var(--border); }
+  .cimg-err { color: var(--err); font-size: 13px; }
   #rendered hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
   #rendered blockquote { margin: 8px 0 8px 2px; padding: 2px 0 2px 14px; border-left: 2px solid #3a4450; }
   #rendered code { background: var(--panel); padding: 1px 4px; border-radius: 4px; font-size: 13px; }
@@ -555,6 +561,24 @@ function setView(v) {
 }
 setView(view);
 $("vRendered").addEventListener("click", () => setView("rendered"));
+// "Show image" next to image links: load it only on request, right below the link.
+document.addEventListener("click", (e) => {  // also covers AI answers, which use the same HTML
+  const b = e.target.closest(".imgbtn");
+  if (!b) return;
+  const shown = b.nextElementSibling;
+  if (shown && shown.classList.contains("cimg-wrap")) { shown.remove(); b.classList.remove("on"); return; }
+  const wrap = document.createElement("span");
+  wrap.className = "cimg-wrap";
+  const img = document.createElement("img");
+  img.className = "cimg"; img.alt = "Image from comment"; img.referrerPolicy = "no-referrer"; img.src = b.dataset.img;
+  img.addEventListener("click", () => window.open(b.dataset.img, "_blank", "noopener"));
+  img.addEventListener("error", () => {
+    wrap.replaceChildren(Object.assign(document.createElement("span"), {className: "cimg-err", textContent: " Image couldn't load (it may have been deleted). Use the link instead."}));
+  });
+  wrap.append(img);
+  b.after(wrap);
+  b.classList.add("on");
+});
 $("vRaw").addEventListener("click", () => setView("raw"));
 
 // ------------------------------------------------------------ open a saved thread
@@ -747,7 +771,10 @@ $("newOnly").addEventListener("click", () => { if (!current) return; newOnly = !
 
 // ------------------------------------------------------------ copy / download
 async function copyRendered() {
-  const html = $("rendered").innerHTML, text = $("rendered").innerText;
+  // Leave out the Show image buttons (and any images opened) from the copy.
+  const clone = $("rendered").cloneNode(true);
+  clone.querySelectorAll(".imgbtn, .cimg-wrap").forEach((el) => el.remove());
+  const html = clone.innerHTML, text = $("rendered").innerText;
   if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
     await navigator.clipboard.write([new ClipboardItem({
       "text/html": new Blob([html], {type: "text/html"}),
