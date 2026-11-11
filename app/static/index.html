@@ -965,7 +965,7 @@ async function loadSettings() {
   $("retDays").value = j.settings.retention_days;
   const auto = $("autoSum");
   auto.replaceChildren(new Option("Off", ""));
-  for (const k of ["local", "cloud"]) if (aiInfo[k].enabled || j.settings.auto_summary === k) auto.append(new Option(`${KIND_NAME[k]} (${aiInfo[k].model || "not set up"})`, k));
+  for (const k of ["local", "cloud", "openai"]) if (aiInfo[k].enabled || j.settings.auto_summary === k) auto.append(new Option(`${KIND_NAME[k]} (${aiInfo[k].model || "not set up"})`, k));
   auto.value = j.settings.auto_summary || "";
   $("autoField").hidden = auto.options.length < 2;
   $("setmsg").textContent = "";
@@ -1022,14 +1022,15 @@ document.addEventListener("click", (e) => {
 }, true);
 
 // ------------------------------------------------------------ AI: shared bits
-let aiInfo = {local: {enabled: false}, cloud: {enabled: false}};
-const KIND_NAME = {cloud: "Claude", local: "Local AI"};
+let aiInfo = {local: {enabled: false}, cloud: {enabled: false}, openai: {enabled: false}};
+const KIND_NAME = {cloud: "Claude", openai: "OpenAI", local: "Local AI"};
+const KINDS = ["cloud", "openai", "local"];
 let aiKind = "cloud";
 try { aiKind = localStorage.getItem("r2m-kind") || "cloud"; } catch {}
 
 function fillKinds(sel) {
   sel.replaceChildren();
-  for (const k of ["cloud", "local"]) {
+  for (const k of KINDS) {
     if (!aiInfo[k].enabled) continue;
     const o = document.createElement("option");
     o.value = k; o.textContent = `${KIND_NAME[k]} (${aiInfo[k].model})`;
@@ -1041,7 +1042,7 @@ function fillKinds(sel) {
 
 async function loadAIInfo() {
   try { aiInfo = await (await fetch("/api/ai")).json(); } catch {}
-  const any = aiInfo.local.enabled || aiInfo.cloud.enabled;
+  const any = KINDS.some(k => aiInfo[k] && aiInfo[k].enabled);
   $("aiBtn").hidden = !any;
   $("fAsk").hidden = !any;
   fillKinds($("askKind")); fillKinds($("allKind"));
@@ -1136,7 +1137,7 @@ async function loadAI() {
 function renderSummary(sums) {
   const box = $("pSum");
   box.replaceChildren();
-  const kinds = ["cloud", "local"].filter(k => aiInfo[k].enabled || sums[k]);
+  const kinds = KINDS.filter(k => aiInfo[k].enabled || sums[k]);
   const have = kinds.filter(k => sums[k] && (sums[k].text || sums[k].running || sums[k].error));
   if (!sumKind || !have.includes(sumKind)) sumKind = have.find(k => sums[k].running) || have[0] || null;
 
@@ -1169,7 +1170,7 @@ function renderSummary(sums) {
   const e = sumKind && sums[sumKind];
   if (!e) {
     const h = document.createElement("div"); h.className = "fhint";
-    h.textContent = "No summary yet. Claude reads the whole thread at once (a few cents for most threads); "
+    h.textContent = "No summary yet. Claude and OpenAI read the whole thread at once (a few cents for most threads); "
       + "local AI is free but reads big threads in parts.";
     box.append(h); return;
   }

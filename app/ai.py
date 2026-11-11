@@ -1,6 +1,6 @@
 """Summaries, per-thread questions, and questions across all saved threads.
 
-Results are saved in /data/ai/<thread id>.json ({"summaries": {"cloud"|"local":
+Results are saved in /data/ai/<thread id>.json ({"summaries": {"cloud"|"openai"|"local":
 {...}}, "chat": [...]}) and, for questions across threads, /data/ai/_all.json.
 Deleting a thread deletes its file (see storage.delete).
 
@@ -36,8 +36,9 @@ ALL = "_all"
 # runs at the same time as a transcription or local AI there (see gpulock.py).
 GPU = gpulock.GpuLock("reddit2md")
 
-# How much text goes to the model. Claude can read a whole thread (1M-token
-# context), capped here so one request can't cost more than about $3 on Opus.
+# How much text goes to the model. Claude and OpenAI can read a whole thread
+# (1M-token context), capped here so one request can't cost more than about
+# $3 on Opus (more on OpenAI's flagship, which costs 2.5x as much per token).
 # Questions across threads send the best-matching comments, which also keeps
 # each question to roughly $0.25.
 CLOUD_THREAD_CHARS = 2_500_000
@@ -236,12 +237,12 @@ class Runner:
         data = storage.get(tid)
         tz = settings.load()["timezone"]
         try:
-            if kind == "cloud":
+            if kind != "local":  # Claude and OpenAI read the whole thread at once
                 text_in = thread_text.full(data, tz)
                 if len(text_in) > CLOUD_THREAD_CHARS:
                     raise RuntimeError("This thread is too long to summarize in one request.")
                 run["stage"] = "Summarizing"
-                text, usage, model, _ = llm.ask("cloud", SUMMARY_SYSTEM, [{"role": "user", "content": text_in}],
+                text, usage, model, _ = llm.ask(kind, SUMMARY_SYSTEM, [{"role": "user", "content": text_in}],
                                                 on_text=lambda t: run.update(text=t))
             else:
                 text, usage, model = self._summarize_local(run, data, tz)
@@ -348,7 +349,7 @@ class Runner:
         data = storage.get(tid)
         tz = settings.load()["timezone"]
         full = thread_text.full(data, tz)
-        budget = CLOUD_THREAD_CHARS if kind == "cloud" else llm.local_chars() - CONVERSATION_CHARS
+        budget = CLOUD_THREAD_CHARS if kind != "local" else llm.local_chars() - CONVERSATION_CHARS
         note = None
         if len(full) + len(THREAD_CHAT_SYSTEM) <= budget:
             system = f"{THREAD_CHAT_SYSTEM}\n\n<thread>\n{full}\n</thread>"
@@ -371,7 +372,7 @@ class Runner:
         return system, messages, None, note
 
     def _all_prompt(self, kind, question, pairs):
-        budget = CLOUD_ALL_CHARS if kind == "cloud" else llm.local_chars() - CONVERSATION_CHARS - len(ALL_SYSTEM)
+        budget = CLOUD_ALL_CHARS if kind != "local" else llm.local_chars() - CONVERSATION_CHARS - len(ALL_SYSTEM)
         # Earlier questions help with follow-ups like "and what about X?".
         recent = " ".join(q["text"] for q, _ in pairs[-2:])
         excerpt, ids, n = INDEX.relevant(f"{question} {recent}", budget)

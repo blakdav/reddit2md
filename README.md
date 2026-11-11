@@ -40,14 +40,14 @@ Saved threads are deleted automatically once they are older than the auto-delete
 
 ## AI summaries, questions and search
 
-Optional, using the same setup as Vidscribe: a local model through your Ollama server, Claude through an API key, or both. Set `OLLAMA_URL`/`OLLAMA_MODEL` and/or `ANTHROPIC_API_KEY` in `docker-compose.yml`; options whose settings are left as placeholders are hidden.
+Optional: a local model through your Ollama server, Claude, OpenAI, or any mix. Set `OLLAMA_URL`/`OLLAMA_MODEL`, `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in `docker-compose.yml`; options whose settings are left as placeholders are hidden. Each summary and question lets you pick which one to use.
 
-- **Summary** (**AI** button in the reader → *Summary*): TL;DR, the main viewpoints and how well supported they are, what OP added, useful details, and notable comments. Saved with the thread. After an **Update** it shows how many comments were added since, with a **Redo** button. Claude reads the whole thread at once; the local model reads big threads in parts and merges its notes.
+- **Summary** (**AI** button in the reader → *Summary*): TL;DR, the main viewpoints and how well supported they are, what OP added, useful details, and notable comments. Saved with the thread. After an **Update** it shows how many comments were added since, with a **Redo** button. Claude and OpenAI read the whole thread at once; the local model reads big threads in parts and merges its notes.
 - **Ask** (*Ask* tab): questions about the open thread. Follow-ups keep the conversation. With the local model, a thread too long for its context is answered from the comments that best match the question (the answer says so).
 - **Search** (🔍 in the header, or press Enter in the sidebar filter): every saved comment containing all the words you type, with highlighted snippets. `"Quoted text"` must appear as is. Click a result to jump to that comment.
 - **Ask AI across all threads** (🔍 → *Ask AI*): finds the saved comments that best match your question (keyword search), and the AI answers from them, naming the threads. Name the thing you're asking about.
 
-Answers cite comments as links like `u/name`; clicking one jumps to that comment (in another thread, it opens that thread first). Claude shows the cost of each answer: a summary of a typical thread is a few cents; a 1,000-comment thread is around $0.50 on Opus; a question across threads is roughly $0.25 or less. Summaries and chats are stored in `/opt/docker/reddit2md/ai/` and deleted along with their thread.
+Answers cite comments as links like `u/name`; clicking one jumps to that comment (in another thread, it opens that thread first). Claude and OpenAI answers show their cost: a summary of a typical thread is a few cents; a 1,000-comment thread is around $0.50 on Claude Opus (about 2.5x that on OpenAI's `gpt-6-astra`, or less than half on `gpt-6.1-sol`); a question across threads is roughly $0.25 or less on Opus. OpenAI requests are sent with `store: false`. Summaries and chats are stored in `/opt/docker/reddit2md/ai/` and deleted along with their thread.
 
 **Auto-summarize** (Settings): Off, Local AI or Claude. Summarizes each newly converted thread, and again after an **Update** that finds new comments.
 
@@ -125,7 +125,9 @@ The pill in the header shows the login state (green with your username, red when
 | `OLLAMA_NUM_CTX` | `32768` | Local context window in tokens |
 | `ANTHROPIC_API_KEY` | (none) | Claude API key for Claude summaries and questions |
 | `CLAUDE_MODEL` | `claude-opus-5-5` | Claude model |
-| `AUTO_SUMMARY` | (off) | First-run default for Auto-summarize: `local` or `cloud` |
+| `OPENAI_API_KEY` | (none) | OpenAI API key for OpenAI summaries and questions |
+| `OPENAI_MODEL` | `gpt-6-astra` | OpenAI model (`gpt-6.1-sol` is about 1/5 the price) |
+| `AUTO_SUMMARY` | (off) | First-run default for Auto-summarize: `local`, `cloud` (Claude) or `openai` |
 | `GPU_LOCK_FILE` | (none) | Lock file shared with Vidscribe, e.g. `/gpu/lock` |
 | `RETENTION_DAYS` | `30` | Initial auto-delete days, until changed in Settings |
 | `TZ` | `UTC` | Initial display time zone, until changed in Settings |

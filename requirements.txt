@@ -6,3 +6,4 @@ markdown-it-py==4.2.0
 linkify-it-py==2.0.3
 tzdata==2026.4
 anthropic==2.6.0
+openai==3.49.0
