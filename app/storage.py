@@ -13,6 +13,9 @@ log = logging.getLogger("reddit2md")
 
 THREADS_DIR = os.environ.get("THREADS_DIR", "/data/threads")
 INDEX = os.path.join(THREADS_DIR, "index.json")
+# Summaries and AI chats, one file per thread (see ai.py). Kept outside
+# THREADS_DIR so the index rebuild doesn't read them as threads.
+AI_DIR = os.environ.get("AI_DIR", os.path.join(os.path.dirname(THREADS_DIR), "ai"))
 ID_RE = re.compile(r"^[a-z0-9]{1,16}$")
 _lock = threading.Lock()
 
@@ -130,6 +133,10 @@ def delete(tid):
     with _lock:
         if os.path.exists(path):
             os.remove(path)
+        try:
+            os.remove(os.path.join(AI_DIR, f"{tid}.json"))
+        except FileNotFoundError:
+            pass
         idx = _load_index()
         idx["threads"].pop(tid, None)
         idx["aliases"] = {u: i for u, i in idx["aliases"].items() if i != tid}

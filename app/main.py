@@ -7,8 +7,11 @@ import uuid
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
+import ai
+import llm
 import settings
 import storage
+from search import INDEX
 from cookies import CookieError, from_values, to_storage_state
 from render import count_new, render, to_html
 from scraper import MAX_SECONDS, POST_ID_RE, SHORT_RE, STATE_FILE, ScrapeError, scrape, session_status
@@ -194,6 +197,106 @@ def thread_delete(tid):
     except ValueError:
         return jsonify(error="Bad id"), 400
     return jsonify(ok=True)
+
+
+# ---------------------------------------------------------------- AI: summaries, questions, search
+
+def _ai_error(e):
+    if isinstance(e, LookupError):
+        return jsonify(error=str(e)), 404
+    return jsonify(error=str(e)), 400
+
+
+@app.get("/api/ai")
+def ai_status():
+    return jsonify(llm.available())
+
+
+@app.get("/api/threads/<tid>/ai")
+def thread_ai(tid):
+    try:
+        storage._path(tid)
+    except ValueError:
+        return jsonify(error="Bad id"), 400
+    return jsonify(summaries=ai.RUNNER.summary_state(tid), chat=ai.RUNNER.chat_state(tid))
+
+
+@app.post("/api/threads/<tid>/summary")
+def summary_start(tid):
+    body = request.get_json(silent=True) or {}
+    try:
+        ai.RUNNER.summarize(tid, body.get("kind"))
+    except (ValueError, LookupError) as e:
+        return _ai_error(e)
+    return jsonify(ok=True)
+
+
+@app.delete("/api/threads/<tid>/summary/<kind>")
+def summary_delete(tid, kind):
+    try:
+        storage._path(tid)
+        ai.RUNNER.delete_summary(tid, kind)
+    except ValueError as e:
+        return _ai_error(e)
+    return jsonify(ok=True)
+
+
+def _ask(key):
+    body = request.get_json(silent=True) or {}
+    try:
+        ai.RUNNER.ask(key, body.get("kind"), body.get("question"))
+    except (ValueError, LookupError) as e:
+        return _ai_error(e)
+    return jsonify(ok=True)
+
+
+def _clear(key):
+    try:
+        ai.RUNNER.clear_chat(key)
+    except ValueError as e:
+        return _ai_error(e)
+    return jsonify(ok=True)
+
+
+@app.post("/api/threads/<tid>/chat")
+def thread_chat(tid):
+    try:
+        storage._path(tid)
+    except ValueError:
+        return jsonify(error="Bad id"), 400
+    return _ask(tid)
+
+
+@app.delete("/api/threads/<tid>/chat")
+def thread_chat_clear(tid):
+    try:
+        storage._path(tid)
+    except ValueError:
+        return jsonify(error="Bad id"), 400
+    return _clear(tid)
+
+
+@app.get("/api/ask")
+def ask_all_state():
+    return jsonify(ai.RUNNER.chat_state(ai.ALL))
+
+
+@app.post("/api/ask")
+def ask_all():
+    return _ask(ai.ALL)
+
+
+@app.delete("/api/ask")
+def ask_all_clear():
+    return _clear(ai.ALL)
+
+
+@app.get("/api/search")
+def search():
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify(threads=[], total=0, limited=False)
+    return jsonify(INDEX.search(q[:500]))
 
 
 # ---------------------------------------------------------------- settings

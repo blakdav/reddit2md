@@ -14,4 +14,15 @@ services:
       - RETENTION_DAYS=30   # initial default; change it later in the web UI Settings
       # - FETCH_TIMEOUT=30  # seconds before a stalled Reddit request is retried
       # - MAX_SECONDS=900   # hard cap per conversion so a stuck job frees the browser
+      # AI summaries and questions (optional; leave a line as is to hide that option).
+      # Local AI: your Ollama server as seen from this container, and a model you've pulled.
+      - OLLAMA_URL=http://your-ollama-host:11434
+      - OLLAMA_MODEL=qwen3:14b
+      # - OLLAMA_NUM_CTX=32768
+      # Claude: your Anthropic API key.
+      - ANTHROPIC_API_KEY=your-anthropic-api-key
+      # - CLAUDE_MODEL=claude-opus-5-5
     shm_size: "512mb"
+    # Lets OLLAMA_URL=http://host.docker.internal:11434 reach an Ollama on this same host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

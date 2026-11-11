@@ -29,6 +29,19 @@ Badges appear only in the web view. Copy and Download give clean Markdown (the k
 
 Saved threads are deleted automatically once they are older than the auto-delete setting (default 30 days, based on when they were last fetched), checked hourly.
 
+## AI summaries, questions and search
+
+Optional, using the same setup as Vidscribe: a local model through your Ollama server, Claude through an API key, or both. Set `OLLAMA_URL`/`OLLAMA_MODEL` and/or `ANTHROPIC_API_KEY` in `docker-compose.yml`; options whose settings are left as placeholders are hidden.
+
+- **Summary** (**AI** button in the reader → *Summary*): TL;DR, the main viewpoints and how well supported they are, what OP added, useful details, and notable comments. Saved with the thread. After an **Update** it shows how many comments were added since, with a **Redo** button. Claude reads the whole thread at once; the local model reads big threads in parts and merges its notes.
+- **Ask** (*Ask* tab): questions about the open thread. Follow-ups keep the conversation. With the local model, a thread too long for its context is answered from the comments that best match the question (the answer says so).
+- **Search** (🔍 in the header, or press Enter in the sidebar filter): every saved comment containing all the words you type, with highlighted snippets. `"Quoted text"` must appear as is. Click a result to jump to that comment.
+- **Ask AI across all threads** (🔍 → *Ask AI*): finds the saved comments that best match your question (keyword search), and the AI answers from them, naming the threads. Name the thing you're asking about.
+
+Answers cite comments as links like `u/name`; clicking one jumps to that comment (in another thread, it opens that thread first). Claude shows the cost of each answer: a summary of a typical thread is a few cents; a 1,000-comment thread is around $0.50 on Opus; a question across threads is roughly $0.25 or less. Summaries and chats are stored in `/opt/docker/reddit2md/ai/` and deleted along with their thread.
+
+The local model shares the GPU with anything else using Ollama (e.g. Vidscribe). Summaries unload it right away; questions keep it loaded for 10 minutes so follow-ups are quick.
+
 ## Browser extension (Brave / Chrome)
 
 The `extension/` folder has a small extension that saves threads without copy-pasting:
@@ -93,6 +106,11 @@ The pill in the header shows the login state (green with your username, red when
 | `MAX_REQUESTS` | `400` | Safety cap on requests per thread |
 | `FETCH_TIMEOUT` | `30` | Seconds before a stalled Reddit request is aborted and retried |
 | `MAX_SECONDS` | `900` | Hard time limit per conversion, so a stuck job can't hold the browser forever |
+| `OLLAMA_URL` | (none) | Ollama server for local AI, e.g. `http://host.docker.internal:11434` |
+| `OLLAMA_MODEL` | `qwen3:14b` | Local model (must be pulled in Ollama) |
+| `OLLAMA_NUM_CTX` | `32768` | Local context window in tokens |
+| `ANTHROPIC_API_KEY` | (none) | Claude API key for Claude summaries and questions |
+| `CLAUDE_MODEL` | `claude-opus-5-5` | Claude model |
 | `RETENTION_DAYS` | `30` | Initial auto-delete days, until changed in Settings |
 | `TZ` | `UTC` | Initial display time zone, until changed in Settings |
 | `THREADS_DIR` | `/data/threads` | Where saved threads are stored |

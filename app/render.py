@@ -20,6 +20,16 @@ BADGES = {
     "gone": "no longer on Reddit",
 }
 _BADGE_RE = re.compile(B0 + "([a-z]+)" + B1)
+# Anchor markers: each comment in the web view gets an id (c-<comment id>), so
+# AI answers and search results can link to it. Same private-use trick.
+A0, A1 = "\ue002", "\ue003"
+_ANCHOR_RE = re.compile(A0 + "([a-z0-9]+)" + A1)
+
+
+def _clean(text):
+    for ch in (B0, B1, A0, A1):
+        text = text.replace(ch, "")
+    return text
 
 
 def _date(ts, tz):
@@ -78,7 +88,9 @@ def _comment(node, depth, o, out):
         meta += f" · {_date(node['created'], o['tz'])}"
     body = (node.get("body") or "").strip() or "*[empty]*"
     if o["web"]:
-        body = body.replace(B0, "").replace(B1, "")
+        body = _clean(body)
+        if node.get("id"):
+            meta = f"{A0}{str(node['id']).lower()}{A1}" + meta
         for key in (["new"] if _is_new(node, o["since"]) else []) + ([node["status"]] if node.get("status") else []) \
                 + (["edited"] if node.get("edited") else []):
             meta += f" {B0}{key}{B1}"
@@ -120,7 +132,7 @@ def render(data, scores=True, tz="UTC", web=False, new_only=False, order="saved"
     if post.get("body"):
         body = post["body"].strip()
         if web:
-            body = body.replace(B0, "").replace(B1, "")
+            body = _clean(body)
             if post.get("status"):
                 body = f"{B0}{post['status']}{B1}\n\n" + body
         lines += [body, ""]
@@ -150,4 +162,5 @@ def count_new(data):
 def to_html(markdown_text):
     html = _md.render(markdown_text)
     html = html.replace("<a href=", '<a target="_blank" rel="noopener noreferrer" href=')
+    html = _ANCHOR_RE.sub(lambda m: f'<span class="anchor" id="c-{m.group(1)}"></span>', html)
     return _BADGE_RE.sub(lambda m: f'<span class="badge b-{m.group(1)}">{BADGES.get(m.group(1), m.group(1))}</span>', html)
