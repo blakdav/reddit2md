@@ -27,7 +27,7 @@ DELAY = float(os.environ.get("REQUEST_DELAY", "1.0"))
 MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "400"))
 USER_AGENT = os.environ.get("USER_AGENT", "").strip()
 FETCH_TIMEOUT = float(os.environ.get("FETCH_TIMEOUT", "30"))  # seconds per Reddit request
-MAX_SECONDS = float(os.environ.get("MAX_SECONDS", "900"))  # hard cap per conversion
+MAX_SECONDS = float(os.environ.get("MAX_SECONDS", "1800"))  # hard cap per conversion
 
 POST_ID_RE = re.compile(r"/comments/([a-z0-9]+)", re.I)
 SHORT_RE = re.compile(r"redd\.it/([a-z0-9]+)", re.I)
@@ -51,6 +51,13 @@ class RateLimited(Blocked):
 # After a 429 on the JSON endpoints, skip them (go straight to page mode) until this time.
 JSON_COOLDOWN = float(os.environ.get("JSON_COOLDOWN", "900"))
 _json_blocked_until = 0.0
+
+
+class RetryLater(ScrapeError):
+    """Reddit rate limited us before anything useful was fetched; the queue retries the thread later."""
+    def __init__(self, msg, retry_after=None):
+        super().__init__(msg)
+        self.retry_after = retry_after
 
 
 class Incomplete(ScrapeError):
@@ -368,62 +375,136 @@ POST_JS = """
 """
 
 
-LINK_TRIES = 3  # clicks per "load more" link before giving up on it
+LINK_TRIES = 3  # failed clicks before a "load more" link counts as dead (only when Reddit isn't limiting)
+LINK_SEL = ".thing.morechildren .morecomments a:visible:not([data-r2m-skip])"
+LIMIT_BACKOFF = (30, 60, 120, 240, 300)  # waits when Reddit limits clicks without saying for how long
+
+
+def _watch_morechildren(page):
+    """Record the status and rate-limit headers of the requests old.reddit makes for 'load more'."""
+    state = {"seq": 0, "status": None, "remaining": None, "reset": None, "used": None, "seen_headers": False}
+
+    def on_response(r):
+        if "/api/morechildren" not in r.url:
+            return
+        h = r.headers
+        state.update(seq=state["seq"] + 1, status=r.status, remaining=_num(h.get("x-ratelimit-remaining")),
+                     reset=_num(h.get("retry-after")) or _num(h.get("x-ratelimit-reset")),
+                     used=_num(h.get("x-ratelimit-used")))
+        if state["remaining"] is not None and not state["seen_headers"]:
+            state["seen_headers"] = True
+            log.info("Reddit rate limit for 'load more': %s used, %s left, resets in %ss",
+                     state["used"], state["remaining"], state["reset"])
+
+    page.on("response", on_response)
+    return state, lambda: page.remove_listener("response", on_response)
 
 
 def _expand_all(page, progress, counter):
     """Click every "load more comments" link.
 
-    A failed click (usually Reddit rate limiting) leaves the link on the page. Instead of
-    clicking it again every second, back off and retry; skip a link after LINK_TRIES so
-    one dead link can't burn the whole request budget.
+    Reddit limits how fast these load. When a click fails, the cause is usually that limit,
+    not the link: so failures while Reddit is limiting (HTTP 429, or two different links failing
+    in a row) never count against a link; the whole loop waits instead (Reddit's reset time when
+    it sends one). A link is only given up on after LINK_TRIES failures while other links load.
     """
-    rounds = stalls = skipped = 0
+    state, unwatch = _watch_morechildren(page)
+    try:
+        _expand_loop(page, progress, counter, state)
+    finally:
+        unwatch()
+
+
+def _expand_loop(page, progress, counter, state):
+    rounds = fails_in_row = limited_waits = skipped = 0
     while rounds < MAX_REQUESTS:
         _check_deadline(counter)
-        links = page.locator(".thing.morechildren .morecomments a:visible:not([data-r2m-skip])")
-        n = links.count()
+        fresh = page.locator(LINK_SEL + ":not([data-r2m-defer])")
+        n_fresh = fresh.count()
+        links = fresh if n_fresh else page.locator(LINK_SEL)
+        n = n_fresh or links.count()
         if n == 0:
             break
         rounds += 1
         progress(f"Clicking 'load more comments' ({n} remaining links, round {rounds})")
-        link = links.first
+        seq0 = state["seq"]
         try:
-            handle = link.element_handle(timeout=10000)
+            handle = links.first.element_handle(timeout=10000)
             handle.click(timeout=10000)
         except Exception as e:
             log.info("load-more click issue: %s", e)
             handle = None
-        loaded = False
+        loaded, status = False, None
         if handle:
-            # On success old.reddit replaces the whole "more" stub, removing the link.
-            try:
-                page.wait_for_function("e => !e.isConnected || !e.closest('.thing.morechildren')",
-                                       arg=handle, timeout=15000)
-                loaded = True
-            except Exception:
-                pass
+            # On success old.reddit replaces the whole "more" stub, removing the link. Stop waiting
+            # early if Reddit answered with an error.
+            end = time.time() + 15
+            while time.time() < end:
+                try:
+                    if handle.evaluate("e => !e.isConnected || !e.closest('.thing.morechildren')"):
+                        loaded = True
+                        break
+                except Exception:
+                    loaded = True  # element gone with its frame: replaced
+                    break
+                if state["seq"] > seq0 and (state["status"] or 0) >= 400:
+                    status = state["status"]
+                    break
+                page.wait_for_timeout(250)
         if loaded:
-            stalls = 0
-            _sleep(counter, DELAY)
+            fails_in_row = limited_waits = 0
+            if state["remaining"] is not None and state["remaining"] < 1 and state["reset"]:
+                wait = min(state["reset"], 600) + 1
+                counter["throttled"] += 1
+                progress(f"Reddit's 'load more' limit is used up; waiting {wait:.0f}s for it to reset")
+                _sleep(counter, wait)
+            else:
+                _sleep(counter, DELAY)
             continue
-        stalls += 1
+
+        fails_in_row += 1
         counter["throttled"] += 1
+        limited = status == 429 or state["remaining"] == 0 or (fails_in_row >= 2 and n_fresh > 0)
+        if limited:
+            wait = state["reset"] if status == 429 and state["reset"] else \
+                LIMIT_BACKOFF[min(limited_waits, len(LIMIT_BACKOFF) - 1)]
+            limited_waits += 1
+            why = f"HTTP {status}" if status else "clicks not loading"
+            progress(f"Reddit is rate limiting 'load more' ({why}); waiting {wait:.0f}s, nothing skipped")
+            # Let deferred links be tried again once the limit lifts.
+            page.evaluate("() => document.querySelectorAll('[data-r2m-defer]').forEach(e => delete e.dataset.r2mDefer)")
+            _sleep(counter, wait)
+            continue
         if handle:
+            # Count it against this link and try the others first; if they load, this one is dead.
             tries = handle.evaluate(
                 "(e, max) => { const t = +(e.dataset.r2mTries || 0) + 1; e.dataset.r2mTries = t;"
-                " if (t >= max) e.dataset.r2mSkip = '1'; return t; }", LINK_TRIES)
+                " e.dataset.r2mDefer = '1'; if (t >= max) e.dataset.r2mSkip = '1'; return t; }", LINK_TRIES)
             if tries >= LINK_TRIES:
                 skipped += 1
                 counter["skipped"] += 1
-                log.info("Skipping a 'load more' link after %d failed clicks", tries)
-        wait = min(60, DELAY * 2 ** stalls)
-        progress(f"'Load more' didn't load (Reddit may be rate limiting); waiting {wait:.0f}s")
-        _sleep(counter, wait)
+                log.info("Skipping a 'load more' link that failed %d times while others loaded", tries)
+        if n_fresh:
+            _sleep(counter, DELAY)
+        else:
+            # Only links that already failed are left: give them a slower last try.
+            wait = LIMIT_BACKOFF[min(fails_in_row - 1, len(LIMIT_BACKOFF) - 1)]
+            progress(f"Retrying 'load more' links that failed before; waiting {wait:.0f}s")
+            _sleep(counter, wait)
     if skipped:
         progress(f"Gave up on {skipped} 'load more' link(s); some comments may be missing")
     if rounds >= MAX_REQUESTS:
         raise Incomplete(f"Hit MAX_REQUESTS ({MAX_REQUESTS}) clicking 'load more' (raise the limit in compose)")
+
+
+def _goto(page, url):
+    """Open a Reddit page; a 429 means retry the whole thread later rather than fail it."""
+    resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    if resp is not None and resp.status == 429:
+        retry = _num(resp.headers.get("retry-after")) or _num(resp.headers.get("x-ratelimit-reset"))
+        raise RetryLater("Reddit is rate limiting page loads (HTTP 429)" + (f", reset in {retry:.0f}s" if retry else ""),
+                         retry)
+    return resp
 
 
 def _to_nodes(items):
@@ -438,7 +519,7 @@ def _to_nodes(items):
 
 
 def scrape_dom(page, post_id, sort, progress, counter):
-    page.goto(f"{BASE}/comments/{post_id}/?limit=500&sort={quote(sort)}", wait_until="domcontentloaded", timeout=60000)
+    _goto(page, f"{BASE}/comments/{post_id}/?limit=500&sort={quote(sort)}")
     if page.locator("#siteTable > .thing.link").count() == 0:
         raise ScrapeError("Thread page did not render. Session may be logged out or blocked.")
     raw = page.evaluate(POST_JS)
@@ -474,7 +555,11 @@ def scrape_dom(page, post_id, sort, progress, counter):
             continue
         seen.add(url)
         progress(f"Opening deep thread under comment {node['id']}")
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        try:
+            _goto(page, url)
+        except RetryLater as e:
+            _mark_partial(counter, str(e), progress)
+            break
         _sleep(counter, DELAY)
         try:
             _expand_all(page, progress, counter)
@@ -512,7 +597,7 @@ def scrape(url, sort="confidence", mode="auto", progress=lambda msg: None, cance
             page.set_default_timeout(60000)
             post_id = resolve_post_id(page, url)
             progress(f"Thread ID {post_id}")
-            page.goto(f"{BASE}/comments/{post_id}/", wait_until="domcontentloaded", timeout=60000)
+            _goto(page, f"{BASE}/comments/{post_id}/")
             user = _logged_in_user(page)
             used = mode
             if mode == "auto" and time.time() < _json_blocked_until:
@@ -547,7 +632,7 @@ def _partial_reason(counter):
     if counter.get("partial"):
         reasons.append(counter["partial"])
     if counter.get("skipped"):
-        reasons.append(f"skipped {counter['skipped']} 'load more' link(s) that kept failing (likely rate limiting)")
+        reasons.append(f"skipped {counter['skipped']} 'load more' link(s) that kept failing while others loaded")
     if counter.get("deep_skipped"):
         reasons.append(f"{counter['deep_skipped']} 'continue this thread' link(s) not opened")
     return "; ".join(reasons) or None

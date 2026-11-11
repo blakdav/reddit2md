@@ -16,12 +16,13 @@ import threading
 import time
 import uuid
 
-from scraper import Cancelled, ScrapeError
+from scraper import Cancelled, RetryLater, ScrapeError
 
 log = logging.getLogger("reddit2md")
 
 QUEUE_PAUSE = float(os.environ.get("QUEUE_PAUSE", "15"))  # seconds between threads
 RATE_LIMIT_PAUSE = float(os.environ.get("RATE_LIMIT_PAUSE", "120"))  # after a job Reddit throttled
+RETRIES = 3  # times a thread is put back in line when Reddit rate limits it before anything loads
 HISTORY = 50  # finished jobs kept in the list
 LOG_LINES = 40  # progress lines kept per job
 ACTIVE = ("queued", "running")
@@ -85,8 +86,8 @@ class Queue:
                 job = next(j for j in self.jobs if j["status"] == "queued")
                 job.update(status="running", started_at=time.time(), progress="Starting")
                 self._save()
-            throttled = self._run(job)
-            pause = RATE_LIMIT_PAUSE if throttled else QUEUE_PAUSE
+            throttled, retry_after = self._run(job)
+            pause = max(RATE_LIMIT_PAUSE, retry_after or 0) if throttled else QUEUE_PAUSE
             with self.cond:
                 more = any(j["status"] == "queued" for j in self.jobs)
             if more and pause > 0:
@@ -120,6 +121,21 @@ class Queue:
             self._finish(job, "done", progress="Done", **fields)
         except Cancelled:
             self._finish(job, "cancelled", progress="Cancelled")
+        except RetryLater as e:
+            if job.get("attempts", 0) + 1 >= RETRIES:
+                self._finish(job, "error", error=f"{e} (gave up after {RETRIES} tries)", progress="Failed")
+            else:
+                # Back to the front of the line; the worker pauses before starting it again.
+                wait = max(RATE_LIMIT_PAUSE, e.retry_after or 0)
+                log.info("[%s] %s; re-queued, retrying in %.0fs", jid, e, wait)
+                with self.cond:
+                    job["attempts"] = job.get("attempts", 0) + 1
+                    job["log"].append([round(time.time()), f"{e}; retrying in {wait:.0f}s"])
+                    job.update(status="queued", progress=f"{e}; will retry")
+                    self.jobs.remove(job)
+                    self.jobs.insert(0, job)
+                    self._save()
+                return True, wait
         except Exception as e:
             if isinstance(e, ScrapeError):
                 msg = str(e)
@@ -128,7 +144,7 @@ class Queue:
                 msg = f"{type(e).__name__}: {e}"
             log.info("[%s] Failed: %s", jid, msg)
             self._finish(job, "error", error=msg, progress="Failed")
-        return bool(stats.get("counter", {}).get("throttled"))
+        return bool(stats.get("counter", {}).get("throttled")), None
 
     def _finish(self, job, status, **fields):
         with self.cond:

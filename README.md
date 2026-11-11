@@ -12,6 +12,8 @@ Reddit closed anonymous `.json` access and self-serve API keys in 2026, so this 
    After a 429 it skips the JSON API for `JSON_COOLDOWN` seconds instead of retrying it on every thread, and honours Reddit's rate-limit headers (waiting for the window to reset when it says the budget is used up).
 4. Writes refreshed cookies back to the state file after each run, which keeps the session alive longer.
 
+Reddit limits how fast "load more" works. When clicks stop loading, reddit2md treats it as that limit (HTTP 429, or two different links failing in a row) and waits for Reddit's reset time, or 30 s, 60 s, 120 s and up to 5 min, instead of giving up on links. A link is only skipped as dead after failing 3 times while other links load. If a thread page itself gets a 429, the thread goes back to the front of the queue and is retried (up to 3 times).
+
 Nested replies are rendered as nested blockquotes.
 
 ## Queue
@@ -114,7 +116,7 @@ The pill in the header shows the login state (green with your username, red when
 | `REQUEST_DELAY` | `1.0` | Seconds between Reddit requests |
 | `MAX_REQUESTS` | `400` | Safety cap on requests per thread |
 | `FETCH_TIMEOUT` | `30` | Seconds before a stalled Reddit request is aborted and retried |
-| `MAX_SECONDS` | `900` | Hard time limit per conversion, so a stuck job can't hold the browser forever |
+| `MAX_SECONDS` | `1800` | Time limit per conversion; a thread that hits it is saved as Partial |
 | `QUEUE_PAUSE` | `15` | Seconds to wait between queued threads |
 | `RATE_LIMIT_PAUSE` | `120` | Seconds to wait after a thread where Reddit was rate limiting |
 | `JSON_COOLDOWN` | `900` | After Reddit rate limits the JSON API (HTTP 429), read thread pages instead (DOM mode) for this many seconds |
