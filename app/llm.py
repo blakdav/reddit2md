@@ -30,6 +30,10 @@ def setting(name, default=""):
 OLLAMA_URL = setting("OLLAMA_URL").rstrip("/")
 OLLAMA_MODEL = setting("OLLAMA_MODEL", "qwen3:14b")
 OLLAMA_NUM_CTX = int(setting("OLLAMA_NUM_CTX", "32768"))
+# Most tokens one local answer may write. Without a cap, a model that falls into
+# a repetition loop generates until someone notices (once ~30K tokens, the GPU
+# at full power and every other GPU job waiting). 4096 is ~3,000 words.
+OLLAMA_MAX_TOKENS = int(setting("OLLAMA_MAX_TOKENS", "4096"))
 CLAUDE_MODEL = setting("CLAUDE_MODEL", "claude-opus-5-5")
 ANTHROPIC_KEY = setting("ANTHROPIC_API_KEY")
 OPENAI_KEY = setting("OPENAI_API_KEY")
@@ -105,7 +109,7 @@ def _local(system, messages, on_text, keep_alive):
         # 0 frees the VRAM right away: the GPU is shared with Vidscribe.
         "keep_alive": keep_alive,
         "think": False,
-        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": 0.3},
+        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": 0.3, "num_predict": OLLAMA_MAX_TOKENS},
         "messages": [{"role": "system", "content": system}]
                     + [{"role": m["role"], "content": m["content"] if isinstance(m["content"], str) else _text(m["content"])}
                        for m in messages],
@@ -147,6 +151,10 @@ def _local(system, messages, on_text, keep_alive):
                 on_text(text)
             if chunk.get("done"):
                 usage = {"input": chunk.get("prompt_eval_count"), "output": chunk.get("eval_count")}
+                if chunk.get("done_reason") == "length":
+                    raise RuntimeError(f"The local model wrote {OLLAMA_MAX_TOKENS} tokens without finishing "
+                                       "(it was probably repeating itself), so it was stopped. "
+                                       "Raise OLLAMA_MAX_TOKENS if real answers need more.")
     if not text.strip():
         raise RuntimeError("Ollama returned an empty answer.")
     return text.strip(), usage, OLLAMA_MODEL, None
